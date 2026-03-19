@@ -64,8 +64,19 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="AppConfig.cs" />
+    <Compile Include="ArgsModel.cs" />
+    <Compile Include="ArgsParser.cs" />
+    <Compile Include="DoBatchCloseHandler.cs" />
+    <Compile Include="CommandRouter.cs" />
+    <Compile Include="DoCreditHandler.cs" />
+    <Compile Include="DoDebitHandler.cs" />
+    <Compile Include="DoEbtHandler.cs" />
+    <Compile Include="LastTransactionHandler.cs" />
     <Compile Include="LegacyResponseWriter.cs" />
-    <Compile Include="PoslinkSemi.cs" />
+    <Compile Include="Logger.cs" />
+    <Compile Include="PoslinkReflection.cs" />
+    <Compile Include="PoslinkRequestBuilder.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>

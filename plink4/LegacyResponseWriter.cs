@@ -7,13 +7,22 @@ namespace plink4
 {
     internal static class LegacyResponseWriter
     {
-        // Write legacy response.txt in a stable, line-index-friendly way (26 lines)
         public static void WriteFromRsp(string cardType, string txnType, bool ok, object rsp)
         {
-            // Best-effort mappings (we’ll tighten after you paste response2.txt once)
-            string respCode = SafeStr(rsp, "ResponseCode");
-            string respMsg = SafeStr(rsp, "ResponseMessage");
-            string authCode = SafeStr(rsp, "AuthCode");
+            string respCode = FirstNonEmpty(
+                SafeStr(rsp, "ResponseCode")
+            );
+
+            string respMsg = FirstNonEmpty(
+                SafeStr(rsp, "ResponseMessage"),
+                SafeStr(rsp, "HostResponseMessage")
+            );
+
+            string authCode = FirstNonEmpty(
+                GetNestedStr(rsp, "HostInformation", "AuthorizationCode"),
+                GetNestedStr(rsp, "HostInformation", "AuthCode"),
+                SafeStr(rsp, "AuthCode")
+            );
 
             WriteLegacy(cardType, txnType, ok, respMsg, respCode, authCode, rsp);
         }
@@ -23,55 +32,81 @@ namespace plink4
         {
             Directory.CreateDirectory(Path.GetDirectoryName(AppConfig.OutResponse));
 
-            // 26 lines – keep order stable so your resultline[] indexes don’t shift randomly.
-            // Your Paradox code uses resultline[2] as “ok/otherwise”, and then reads various fixed positions.
-            // We’ll keep a consistent layout and you can remap once we see real fields in response2.txt.
             var lines = new string[26];
 
             lines[0] = "Result: " + (ok ? "OK" : (responseMessage ?? "ERROR"));
-            lines[1] = "CardType: " + (cardType ?? "");
+            lines[1] = "CardType: " + FirstNonEmpty(
+                cardType,
+                SafeStr(rspObj, "EdcType"),
+                GetNestedStr(rspObj, "AccountInformation", "CardType")
+            );
             lines[2] = "TxnType: " + (txnType ?? "");
             lines[3] = "Time: " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
 
-            // Keep these in classic key:value format
-            lines[4] = "TransType: " + SafeStr(rspObj, "TransactionType");          // often exists
+            lines[4] = "TransType: " + FirstNonEmpty(
+                SafeStr(rspObj, "TransactionType")
+            );
+
             lines[5] = "Account: " + FirstNonEmpty(
+                GetNestedStr(rspObj, "AccountInformation", "Account"),
                 SafeStr(rspObj, "AccountNumber"),
                 SafeStr(rspObj, "MaskedAccount"),
                 SafeStr(rspObj, "CardNumber"),
-                SafeStr(rspObj, "PAN"));
+                SafeStr(rspObj, "PAN")
+            );
 
             lines[6] = "ExpDate: " + FirstNonEmpty(
+                GetNestedStr(rspObj, "AccountInformation", "ExpireDate"),
                 SafeStr(rspObj, "ExpireDate"),
-                SafeStr(rspObj, "ExpDate"));
+                SafeStr(rspObj, "ExpDate")
+            );
 
             lines[7] = "RecNo: " + FirstNonEmpty(
+                GetNestedStr(rspObj, "TraceInformation", "ReferenceNumber"),
+                GetNestedStr(rspObj, "TraceInformation", "RefNum"),
                 SafeStr(rspObj, "RecordNo"),
                 SafeStr(rspObj, "RecNo"),
-                SafeStr(rspObj, "ReferenceNumber"));
+                SafeStr(rspObj, "ReferenceNumber")
+            );
 
             lines[8] = "Amount: " + FirstNonEmpty(
+                GetNestedStr(rspObj, "AmountInformation", "ApprovedAmount"),
+                GetNestedStr(rspObj, "AmountInformation", "ApproveAmount"),
+                GetNestedStr(rspObj, "AmountInformation", "TransactionAmount"),
                 SafeStr(rspObj, "ApprovedAmount"),
-                SafeStr(rspObj, "TransactionAmount"));
+                SafeStr(rspObj, "TransactionAmount")
+            );
 
             lines[9] = "HostRef: " + FirstNonEmpty(
+                GetNestedStr(rspObj, "HostInformation", "HostReferenceNumber"),
+                GetNestedStr(rspObj, "HostInformation", "HostRefNum"),
                 SafeStr(rspObj, "HostRefNum"),
                 SafeStr(rspObj, "ReferenceNum"),
-                SafeStr(rspObj, "RefNum"));
+                SafeStr(rspObj, "RefNum")
+            );
 
-            lines[10] = "AuthCode: " + (authCode ?? "");
+            lines[10] = "AuthCode: " + FirstNonEmpty(
+                authCode,
+                GetNestedStr(rspObj, "HostInformation", "AuthorizationCode"),
+                GetNestedStr(rspObj, "HostInformation", "AuthCode")
+            );
+
             lines[11] = "ResponseCode: " + (responseCode ?? "");
             lines[12] = "ResponseMessage: " + (responseMessage ?? "");
 
-            // EBT balance (your Paradox reads RemainingBalance sometimes)
             lines[13] = "RemainingBalance: " + FirstNonEmpty(
+                GetNestedStr(rspObj, "AmountInformation", "Balance1"),
                 SafeStr(rspObj, "RemainingBalance"),
                 SafeStr(rspObj, "Balance"),
-                SafeStr(rspObj, "AvailableBalance"));
+                SafeStr(rspObj, "AvailableBalance")
+            );
 
-            // filler lines to reach 26 (stable)
-            for (int i = 14; i < 26; i++)
-                lines[i] = "Field" + (i + 1) + ": " + "";
+            lines[14] = "Field15: " + FirstNonEmpty(
+                GetNestedStr(rspObj, "AmountInformation", "Balance2")
+            );
+
+            for (int i = 15; i < 26; i++)
+                lines[i] = "Field" + (i + 1) + ": ";
 
             File.WriteAllText(AppConfig.OutResponse, string.Join(Environment.NewLine, lines) + Environment.NewLine);
         }
@@ -97,7 +132,6 @@ namespace plink4
                 sb.AppendLine(pi.Name + " = " + (v == null ? "(null)" : v.ToString()));
             }
 
-            // also dump nested common sub-objects if present
             DumpSub(sb, obj, "AmountInformation");
             DumpSub(sb, obj, "AccountInformation");
             DumpSub(sb, obj, "TraceInformation");
@@ -135,6 +169,22 @@ namespace plink4
                 var pi = obj.GetType().GetProperty(prop, BindingFlags.Public | BindingFlags.Instance);
                 var v = pi?.GetValue(obj, null);
                 return v == null ? "" : v.ToString();
+            }
+            catch { return ""; }
+        }
+
+        private static string GetNestedStr(object obj, string parentProp, string childProp)
+        {
+            try
+            {
+                if (obj == null) return "";
+                var p1 = obj.GetType().GetProperty(parentProp, BindingFlags.Public | BindingFlags.Instance);
+                var parent = p1?.GetValue(obj, null);
+                if (parent == null) return "";
+
+                var p2 = parent.GetType().GetProperty(childProp, BindingFlags.Public | BindingFlags.Instance);
+                var val = p2?.GetValue(parent, null);
+                return val == null ? "" : val.ToString();
             }
             catch { return ""; }
         }
