@@ -9,7 +9,11 @@ namespace plink4
         {
             if (model == null) throw new ArgumentNullException(nameof(model));
 
-            Logger.Info($"ref={model.RefNum} amt={model.Amount} surcharge={model.Surcharge} cardType={model.CardType} type={model.TxnType} ip={model.Ip} tcpFlag={model.TcpFlag} argPort={model.ArgPort} origRef={model.OriginalRef} preTip={model.PreTipFlag}");
+            Logger.Info(
+                $"ref={model.RefNum} amt={model.Amount} surcharge={model.Surcharge} " +
+                $"cardType={model.CardType} type={model.TxnType} ip={model.Ip} " +
+                $"tcpFlag={model.TcpFlag} argPort={model.ArgPort} origRef={model.OriginalRef} " +
+                $"preTip={model.PreTipFlag} approval={model.ApprovalCode} transactionId={model.TransactionId}");
 
             if (model.CardType == "BATCHCLOSE")
             {
@@ -23,28 +27,30 @@ namespace plink4
                 return LastTransactionHandler.Run(model);
             }
 
-            if (string.Equals(model.TxnType, "ADJUST", StringComparison.OrdinalIgnoreCase))
-            {
-                LegacyResponseWriter.WriteLegacy(model.CardType, model.TxnType, ok: false,
-                    responseMessage: "ADJUST not implemented yet", responseCode: "NA", authCode: "");
-                return 9;
-            }
-
             var term = ConnectTerminal(model);
 
             object rspObj;
             int rc;
 
-            switch (model.CardType)
+            // Handle ADJUST first because it is based on txn type (4th argument)
+            if (string.Equals(model.TxnType, "ADJUST", StringComparison.OrdinalIgnoreCase))
+            {
+                Logger.Info("ROUTE CHECK: calling DoCreditAdjustHandler");
+                return DoCreditAdjustHandler.Run(model);
+            }
+
+            switch ((model.CardType ?? "").Trim().ToUpperInvariant())
             {
                 case "CREDIT":
                     Logger.Info("ROUTE CHECK: calling DoCreditHandler");
                     rc = DoCreditHandler.Run(term, model, out rspObj);
                     break;
+
                 case "DEBIT":
                     Logger.Info("ROUTE CHECK: calling DoDebitHandler");
                     rc = DoDebitHandler.Run(term, model, out rspObj);
                     break;
+
                 case "EBT_CASHBENEFIT":
                 case "EBT_CASH":
                     Logger.Info("ROUTE CHECK: calling DoEbtHandler");
@@ -56,6 +62,7 @@ namespace plink4
                     Logger.Info("ROUTE CHECK: calling DoEbtHandler");
                     rc = DoEbtHandler.Run(term, model, out rspObj);
                     break;
+
                 default:
                     throw new Exception("Unsupported CardType: " + model.CardType);
             }
@@ -71,6 +78,8 @@ namespace plink4
         /// Builds a CommunicationSetting, passes it to POSLinkSemi.GetTerminal(setting),
         /// and returns the Terminal object which has Transaction / Report / Batch on it.
         /// </summary>
+        /// 
+
         internal static object ConnectTerminal(ArgsModel model)
         {
             Logger.Info($"ConnectTerminal: {model.Ip}:{model.ArgPort}");
@@ -190,8 +199,6 @@ namespace plink4
             pi.SetValue(obj, finalValue, null);
             Logger.Info($"SetRequiredProperty: {obj.GetType().Name}.{propName} = {finalValue}");
         }
-
-
 
         private static object GetStaticFieldValue(Type type, string fieldName)
         {

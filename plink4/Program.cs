@@ -8,29 +8,43 @@ namespace plink4
     {
         static int Main(string[] args)
         {
-            // EnsureFolders first so Logger can write, then load DLLs, then log startup
             Logger.EnsureFolders();
-      //      LoadPosLinkDlls();
+            //   LoadPosLinkDlls();
             Logger.LogStartup(args);
 
-            if (!ArgsParser.TryParse(args, out var model, out var err))
-            {
-                Logger.Error(err);
-
-                LegacyResponseWriter.WriteLegacy(
-                    model?.CardType ?? "",
-                    model?.TxnType ?? "",
-                    ok: false,
-                    responseMessage: err,
-                    responseCode: "ERR",
-                    authCode: ""
-                );
-
-                return 2;
-            }
+            ArgsModel model = new ArgsModel();
 
             try
             {
+                if (args == null || args.Length == 0)
+                    throw new Exception("No arguments supplied.");
+
+                model.RefNum = args.Length > 0 ? (args[0] ?? "").Trim() : "";
+                model.Amount = args.Length > 1 ? (args[1] ?? "").Trim() : "";
+                model.CardType = args.Length > 2 ? (args[2] ?? "").Trim().ToUpperInvariant() : "";
+                model.Command = model.CardType;
+                model.TxnType = args.Length > 3 ? (args[3] ?? "").Trim().ToUpperInvariant() : "";
+                model.Ip = args.Length > 4 ? (args[4] ?? "").Trim() : "";
+                model.TcpFlag = args.Length > 5 ? (args[5] ?? "").Trim().ToUpperInvariant() : "";
+                model.ArgPort = args.Length > 6 ? (args[6] ?? "").Trim() : "";
+                model.OriginalRef = args.Length > 7 ? (args[7] ?? "").Trim() : "";
+                model.TransactionId = args.Length > 8 ? (args[8] ?? "").Trim() : "";
+                model.Surcharge = args.Length > 9 ? (args[9] ?? "").Trim() : "";
+                model.PreTipFlag = args.Length > 10 && (args[10] ?? "").Trim() == "1" ? "1" : "0";
+                model.ApprovalCode = args.Length > 11 ? (args[11] ?? "").Trim() : "";
+
+                if (string.IsNullOrWhiteSpace(model.RefNum))
+                    throw new Exception("RefNum missing.");
+
+                if (string.IsNullOrWhiteSpace(model.CardType))
+                    throw new Exception("CardType missing.");
+
+                if (string.IsNullOrWhiteSpace(model.TxnType))
+                    throw new Exception("TxnType missing.");
+
+                if (string.IsNullOrWhiteSpace(model.Ip))
+                    throw new Exception("IP missing.");
+
                 return CommandRouter.Execute(model);
             }
             catch (Exception ex)
@@ -39,8 +53,8 @@ namespace plink4
                 Logger.Error(ex.ToString());
 
                 LegacyResponseWriter.WriteLegacy(
-                    model.CardType,
-                    model.TxnType,
+                    model.CardType ?? "",
+                    model.TxnType ?? "",
                     ok: false,
                     responseMessage: ex.Message,
                     responseCode: "EX",

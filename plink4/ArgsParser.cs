@@ -1,212 +1,279 @@
 ﻿using System;
+using System.Globalization;
+using System.Reflection;
 
 namespace plink4
 {
-    internal static class ArgsParser
+    internal static class DoCreditAdjustmentHandler
     {
-        private static string GetArg(string[] args, int i)
-            => (args != null && i >= 0 && i < args.Length && args[i] != null) ? args[i].Trim() : "";
-
-        public static bool TryParse(string[] args, out ArgsModel m, out string err)
+        public static int Run(ArgsModel model)
         {
-            m = null;
-            err = null;
-
-            if (args == null || args.Length == 0)
+            try
             {
-                err = "No arguments supplied.";
-                return false;
-            }
+                if (model == null)
+                    throw new Exception("ArgsModel is null.");
 
-            if (TryParseSixArgBatchClose(args, out m, out err))
-                return true;
+                Logger.Info("Starting DoCreditAdjustmentHandler");
 
-            if (TryParseSixArgLastTransaction(args, out m, out err))
-                return true;
+                object terminal = CommandRouter.ConnectTerminal(model);
+                if (terminal == null)
+                    throw new Exception("Terminal connection failed.");
 
-            if (args.Length < 7)
-            {
-                err = "Missing required arguments. Expected: ref amount cardType txnType ip tcpFlag port [surcharge] [origRef] [preTipFlag] [approvalCode] [transactionId]";
-                return false;
-            }
+                Type termType = terminal.GetType();
 
-            string refNum = GetArg(args, 0);
-            string amount = GetArg(args, 1);
-            string arg2 = GetArg(args, 2).ToUpperInvariant();
-            string arg3 = GetArg(args, 3).ToUpperInvariant();
-            string ip = GetArg(args, 4);
-            string tcpFlag = GetArg(args, 5);
-            string argPort = GetArg(args, 6);
+                object transaction = termType.GetProperty("Transaction")?.GetValue(terminal, null);
+                if (transaction == null)
+                    throw new Exception("terminal.Transaction is null.");
 
-            string surcharge = GetArg(args, 7);
-            string origRef = GetArg(args, 8);
-            string preTip = (GetArg(args, 9) == "1") ? "1" : "0";
-            string appr = GetArg(args, 10);
-            string transId = GetArg(args, 11);
+                Type txnType = transaction.GetType();
 
-            // Old style batch close
-            if (arg2 == "BATCHCLOSE")
-            {
-                m = BuildBatchClose(refNum, amount, ip, tcpFlag, argPort);
-                return ValidateIpOnly(m, out err);
-            }
+                Type reqType = txnType.Assembly.GetType("POSLink2.Transaction.DoCreditReq");
+                if (reqType == null)
+                    throw new Exception("Could not load POSLink2.Transaction.DoCreditReq");
 
-            // Custom command style:
-            // ref amount lasttransaction SALE ip tcpFlag port
-            // 7-arg style if ever sent this way:
-            // ref amount LASTTRANSACTION SALE ip tcpFlag port
-            if (arg2 == "LASTTRANSACTION")
-            {
-                m = BuildLastTransaction(refNum, amount, arg3, ip, tcpFlag, argPort);
-                return ValidateBasic(m, out err, requireAmount: false);
-            }
+                object req = Activator.CreateInstance(reqType);
+                if (req == null)
+                    throw new Exception("Could not create DoCreditReq");
 
-            if (arg3 == "ADJUST")
-            {
-                preTip = "0";
-                appr = GetArg(args, 8);
-                transId = GetArg(args, 9);
-            }
+                SetProp(req, "EdcType", GetEnumValue(txnType.Assembly, "POSLink2.Const.EdcType", "Credit"));
+                SetProp(req, "TransType", GetEnumValue(txnType.Assembly, "POSLink2.Const.TransType", "Adjust"));
 
-            m = new ArgsModel
-            {
-                RefNum = refNum,
-                Amount = amount,
-                CardType = arg2,
-                Command = arg2,
-                TxnType = arg3,
-                Ip = ip,
-                TcpFlag = tcpFlag,
-                ArgPort = argPort,
-                Surcharge = surcharge,
-                OriginalRef = origRef,
-                PreTipFlag = preTip,
-                ApprovalCode = appr,
-                TransactionId = transId
-            };
+                SetProp(req, "RefNum", model.RefNum);
+                SetPropIfExists(req, "InvoiceNo", model.RefNum);
+                SetPropIfExists(req, "OrigRefNum", model.OriginalRef);
+                SetPropIfExists(req, "OriginalRefNum", model.OriginalRef);
+                SetPropIfExists(req, "ApprovalCode", model.ApprovalCode);
+                SetPropIfExists(req, "AuthCode", model.ApprovalCode);
+                SetPropIfExists(req, "TransactionId", model.TransactionId);
 
-            return ValidateBasic(m, out err, requireAmount: true);
-        }
+                Type amountType =
+                    txnType.Assembly.GetType("POSLink2.Transaction.AmountInformation") ??
+                    txnType.Assembly.GetType("POSLink2.Transaction.AmountInfo");
 
+                if (amountType == null)
+                    throw new Exception("Could not load AmountInformation type.");
 
-        private static bool TryParseSixArgLastTransaction(string[] args, out ArgsModel m, out string err)
-        {
-            m = null;
-            err = null;
+                object amountInfo = Activator.CreateInstance(amountType);
+                if (amountInfo == null)
+                    throw new Exception("Could not create AmountInformation.");
 
-            if (args.Length == 6 && GetArg(args, 1).ToUpperInvariant() == "LASTTRANSACTION")
-            {
-                string refNum = GetArg(args, 0);
-                string txnType = GetArg(args, 2);
-                string ip = GetArg(args, 3);
-                string tcpFlag = GetArg(args, 4);
-                string argPort = GetArg(args, 5);
+                decimal amt;
+                if (!decimal.TryParse(model.Amount, NumberStyles.Any, CultureInfo.InvariantCulture, out amt))
+                    throw new Exception("Invalid amount: " + model.Amount);
 
-                m = new ArgsModel
+                string finalAmount = amt.ToString("0.00", CultureInfo.InvariantCulture);
+
+                bool amountSet = false;
+                if (SetPropIfExists(amountInfo, "TransactionAmount", finalAmount)) amountSet = true;
+                if (SetPropIfExists(amountInfo, "Amount", finalAmount)) amountSet = true;
+                if (SetPropIfExists(amountInfo, "TotalAmount", finalAmount)) amountSet = true;
+
+                if (!amountSet)
+                    throw new Exception("No usable amount property found on AmountInformation.");
+
+                SetProp(req, "AmountInformation", amountInfo);
+
+                Logger.Info("ADJUST Ref=" + model.RefNum +
+                            " Amount=" + finalAmount +
+                            " OrigRef=" + model.OriginalRef +
+                            " TxnId=" + model.TransactionId);
+
+                MethodInfo mi = null;
+                foreach (MethodInfo m in txnType.GetMethods())
                 {
-                    RefNum = string.IsNullOrEmpty(refNum) ? "NA" : refNum,
-                    Amount = "0",
-                    CardType = "LASTTRANSACTION",
-                    Command = "LASTTRANSACTION",
-                    TxnType = string.IsNullOrEmpty(txnType) ? "LASTTRANSACTION" : txnType.ToUpperInvariant(),
-                    Ip = ip,
-                    TcpFlag = tcpFlag,
-                    ArgPort = argPort,
-                    Surcharge = "",
-                    OriginalRef = "",
-                    PreTipFlag = "0",
-                    ApprovalCode = "",
-                    TransactionId = ""
-                };
+                    if (m.Name != "DoCredit")
+                        continue;
 
-                return ValidateIpOnly(m, out err);
+                    ParameterInfo[] ps = m.GetParameters();
+                    if (ps.Length == 2 && ps[1].IsOut)
+                    {
+                        mi = m;
+                        break;
+                    }
+                }
+
+                if (mi == null)
+                    throw new Exception("DoCredit(req, out rsp) method not found.");
+
+                object[] callArgs = new object[] { req, null };
+                object result = mi.Invoke(transaction, callArgs);
+                object rsp = callArgs[1];
+
+                int rc = Convert.ToInt32(result ?? -1);
+                Logger.Info("DoCredit returned rc=" + rc);
+
+                string resultCode = "";
+                string resultTxt = "";
+                string authCode = "";
+                string refNumRsp = "";
+
+                if (rsp != null)
+                {
+                    PropertyInfo pi;
+
+                    pi = rsp.GetType().GetProperty("ResultCode");
+                    if (pi != null)
+                    {
+                        object v = pi.GetValue(rsp, null);
+                        resultCode = v == null ? "" : Convert.ToString(v);
+                    }
+
+                    pi = rsp.GetType().GetProperty("ResultTxt");
+                    if (pi != null)
+                    {
+                        object v = pi.GetValue(rsp, null);
+                        resultTxt = v == null ? "" : Convert.ToString(v);
+                    }
+
+                    pi = rsp.GetType().GetProperty("AuthCode");
+                    if (pi != null)
+                    {
+                        object v = pi.GetValue(rsp, null);
+                        authCode = v == null ? "" : Convert.ToString(v);
+                    }
+
+                    pi = rsp.GetType().GetProperty("RefNum");
+                    if (pi != null)
+                    {
+                        object v = pi.GetValue(rsp, null);
+                        refNumRsp = v == null ? "" : Convert.ToString(v);
+                    }
+                }
+
+                bool ok = false;
+                if (rc == 0)
+                {
+                    if (string.Equals(resultCode, "000000", StringComparison.OrdinalIgnoreCase))
+                        ok = true;
+                    else if (!string.IsNullOrWhiteSpace(resultTxt) &&
+                             resultTxt.IndexOf("APPROV", StringComparison.OrdinalIgnoreCase) >= 0)
+                        ok = true;
+                }
+
+                LegacyResponseWriter.WriteLegacy(
+                    model.CardType,
+                    model.TxnType,
+                    ok,
+                    string.IsNullOrWhiteSpace(resultTxt) ? ("ResultCode=" + resultCode) : resultTxt,
+                    authCode,
+                    string.IsNullOrWhiteSpace(refNumRsp) ? model.RefNum : refNumRsp
+                );
+
+                return ok ? 0 : 1;
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("DoCreditAdjustmentHandler failed: " + ex);
+
+                LegacyResponseWriter.WriteLegacy(
+                    model.CardType,
+                    model.TxnType,
+                    false,
+                    ex.Message,
+                    "",
+                    model?.RefNum ?? ""
+                );
+
+                return 1;
+            }
+        }
+
+        private static object CreateAmountInformation(Assembly asm, string amountText)
+        {
+            Type amtType = asm.GetType("POSLink2.Transaction.AmountInformation")
+                        ?? asm.GetType("POSLink2.Transaction.AmountInfo");
+
+            if (amtType == null)
+                throw new Exception("AmountInformation type not found.");
+
+            object amtObj = Activator.CreateInstance(amtType);
+            if (amtObj == null)
+                throw new Exception("Could not create AmountInformation object.");
+
+            string normalized = NormalizeAmount(amountText);
+
+            // Try common property names
+            if (!SetPropIfExists(amtObj, "Amount", normalized) &&
+                !SetPropIfExists(amtObj, "TotalAmount", normalized) &&
+                !SetPropIfExists(amtObj, "TransactionAmount", normalized))
+            {
+                throw new Exception("No usable amount property found on AmountInformation.");
             }
 
-            return false;
+            return amtObj;
         }
 
-
-        private static bool TryParseSixArgBatchClose(string[] args, out ArgsModel m, out string err)
+        private static string NormalizeAmount(string input)
         {
-            m = null;
-            err = null;
+            if (string.IsNullOrWhiteSpace(input))
+                return "0.00";
 
-            if (args.Length == 6 && GetArg(args, 1).ToUpperInvariant() == "BATCHCLOSE")
-            {
-                string refNum = GetArg(args, 0);
-                string ip = GetArg(args, 3);
-                string tcpFlag = GetArg(args, 4);
-                string argPort = GetArg(args, 5);
+            input = input.Trim().Replace("$", "").Replace(",", "");
 
-                m = BuildBatchClose(refNum, "0", ip, tcpFlag, argPort);
-                return ValidateIpOnly(m, out err);
-            }
+            if (!decimal.TryParse(input, NumberStyles.Any, CultureInfo.InvariantCulture, out decimal d))
+                throw new Exception("Invalid amount: " + input);
 
-            return false;
+            return d.ToString("0.00", CultureInfo.InvariantCulture);
         }
 
-        private static ArgsModel BuildBatchClose(string refNum, string amount, string ip, string tcpFlag, string argPort)
+        private static void SetProp(object obj, string propName, object value)
         {
-            return new ArgsModel
-            {
-                RefNum = string.IsNullOrEmpty(refNum) ? "NA" : refNum,
-                Amount = string.IsNullOrEmpty(amount) ? "0" : amount,
-                CardType = "BATCHCLOSE",
-                Command = "BATCHCLOSE",
-                TxnType = "BATCHCLOSE",
-                Ip = ip,
-                TcpFlag = tcpFlag,
-                ArgPort = argPort,
-                Surcharge = "",
-                OriginalRef = "",
-                PreTipFlag = "0",
-                ApprovalCode = "",
-                TransactionId = ""
-            };
+            PropertyInfo p = obj.GetType().GetProperty(propName);
+            if (p == null)
+                throw new Exception($"Property '{propName}' not found on {obj.GetType().FullName}");
+
+            object converted = ConvertValue(value, p.PropertyType);
+            p.SetValue(obj, converted, null);
         }
 
-        private static ArgsModel BuildLastTransaction(string refNum, string amount, string txnType, string ip, string tcpFlag, string argPort)
+        private static bool SetPropIfExists(object obj, string propName, object value)
         {
-            return new ArgsModel
-            {
-                RefNum = string.IsNullOrEmpty(refNum) ? "NA" : refNum,
-                Amount = string.IsNullOrEmpty(amount) ? "0" : amount,
-                CardType = "LASTTRANSACTION",
-                Command = "LASTTRANSACTION",
-                TxnType = string.IsNullOrEmpty(txnType) ? "LASTTRANSACTION" : txnType,
-                Ip = ip,
-                TcpFlag = tcpFlag,
-                ArgPort = argPort,
-                Surcharge = "",
-                OriginalRef = "",
-                PreTipFlag = "0",
-                ApprovalCode = "",
-                TransactionId = ""
-            };
-        }
-
-        private static bool ValidateIpOnly(ArgsModel m, out string err)
-        {
-            err = null;
-            if (string.IsNullOrEmpty(m.Ip))
-            {
-                err = "IP missing";
+            PropertyInfo p = obj.GetType().GetProperty(propName);
+            if (p == null)
                 return false;
-            }
+
+            object converted = ConvertValue(value, p.PropertyType);
+            p.SetValue(obj, converted, null);
             return true;
         }
 
-        private static bool ValidateBasic(ArgsModel m, out string err, bool requireAmount)
+        private static object ConvertValue(object value, Type targetType)
         {
-            err = null;
+            if (value == null)
+                return null;
 
-            if (string.IsNullOrEmpty(m.RefNum)) { err = "RefNum missing"; return false; }
-            if (requireAmount && string.IsNullOrEmpty(m.Amount)) { err = "Amount missing"; return false; }
-            if (string.IsNullOrEmpty(m.CardType)) { err = "CardType missing"; return false; }
-            if (string.IsNullOrEmpty(m.TxnType)) { err = "TxnType missing"; return false; }
-            if (string.IsNullOrEmpty(m.Ip)) { err = "IP missing"; return false; }
+            Type t = Nullable.GetUnderlyingType(targetType) ?? targetType;
 
-            return true;
+            if (t.IsEnum)
+            {
+                if (value.GetType().IsEnum)
+                    return value;
+
+                return Enum.Parse(t, value.ToString(), true);
+            }
+
+            if (t == typeof(string))
+                return value.ToString();
+
+            if (t == typeof(int))
+                return Convert.ToInt32(value);
+
+            if (t == typeof(decimal))
+                return Convert.ToDecimal(value, CultureInfo.InvariantCulture);
+
+            if (t == typeof(bool))
+                return Convert.ToBoolean(value);
+
+            return value;
+        }
+
+        private static object GetEnumValue(Assembly asm, string enumTypeName, string enumName)
+        {
+            Type t = asm.GetType(enumTypeName);
+            if (t == null)
+                throw new Exception("Enum type not found: " + enumTypeName);
+
+            return Enum.Parse(t, enumName, true);
         }
     }
 }

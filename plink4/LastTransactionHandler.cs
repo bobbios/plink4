@@ -54,15 +54,15 @@ namespace plink4
 
             string[] edcCandidates =
             {
-        "Credit",
-        "Debit",
-        "Ebt",
-        "Gift",
-        "Cash",
-        "Loyalty",
-        "QrPayment",
-        "Other"
-    };
+                "Credit",
+                "Debit",
+                "Ebt",
+                "Gift",
+                "Cash",
+                "Loyalty",
+                "QrPayment",
+                "Other"
+            };
 
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -101,7 +101,7 @@ namespace plink4
 
                     Logger.Info($"EDC={edcName} TotalRecord={total}");
 
-                    for (int i = 0; i < total && list.Count < takeCount; i++)
+                    for (int i = total - 1; i >= 0 && list.Count < takeCount; i--)
                     {
                         try
                         {
@@ -113,50 +113,30 @@ namespace plink4
                             TrySetEnumCandidates(req, "CardType", "NotSet");
                             TrySetEnumCandidates(req, "TransactionResultType", "NotSet");
 
-                            // your working app showed RecordNumber may be string in POSLink2
                             SetStringOrIntIfExists(req, "RecordNumber", i.ToString());
 
-                            DumpObject($"LocalDetailReport.row[{i}].req", req);
-
                             int rc = PoslinkReflection.InvokeTxMethod(report, "LocalDetailReport", req, ref rsp);
-
-                            Logger.Info($"LocalDetailReport row rc={rc} EDC={edcName} record={i}");
-
-                            if (rsp != null)
-                                DumpObject($"LocalDetailReport.row[{i}].rsp", rsp);
 
                             if (rc != 0 || rsp == null)
                                 continue;
 
                             var row = BuildRowFromResponse(rsp, edcName);
+
                             if (IsEmptyRow(row))
                                 continue;
 
-                            // force record number if response does not provide it
                             if (row.RecordNumber == 0)
                                 row.RecordNumber = i;
 
-                            // POSLink often returns approve amount in cents as string
-                            if (row.Amount == 0m)
-                            {
-                                var amtInfo = PoslinkReflection.GetProperty(rsp, "AmountInformation");
-                                string approveRaw = ReadString(amtInfo, "ApproveAmount", "ApprovedAmount", "Amount");
-                                if (!string.IsNullOrWhiteSpace(approveRaw) && decimal.TryParse(approveRaw, out var parsed))
-                                    row.Amount = parsed / 100m;
-                            }
-
                             string key = BuildRowKey(row);
+
                             if (!seen.Add(key))
                                 continue;
 
                             list.Add(row);
-
-                            Logger.Info(
-                                $"HISTORY ROW {list.Count}: trans={row.TransactionNumber}, card={row.Last4}, amount={row.Amount:0.00}, auth={row.AuthNumber}, type={row.Type}, record={row.RecordNumber}");
                         }
-                        catch (Exception exRow)
+                        catch
                         {
-                            Logger.Info($"EDC={edcName} record={i} failed: {exRow.Message}");
                         }
                     }
                 }
@@ -177,7 +157,6 @@ namespace plink4
             Logger.Info("GetHistoryTransactions final count=" + list.Count);
             return list;
         }
-
 
         private static void SetStringOrIntIfExists(object obj, string propName, string value)
         {
@@ -203,70 +182,6 @@ namespace plink4
             }
         }
 
-
-        private static List<LastTxnRow> ExtractRowsFromResponse(object rsp, string fallbackType, int takeCount)
-        {
-            var list = new List<LastTxnRow>();
-
-            object rowsObj =
-                PoslinkReflection.GetProperty(rsp, "Transactions") ??
-                PoslinkReflection.GetProperty(rsp, "TransactionList") ??
-                PoslinkReflection.GetProperty(rsp, "Details") ??
-                PoslinkReflection.GetProperty(rsp, "Items") ??
-                PoslinkReflection.GetProperty(rsp, "Records") ??
-                PoslinkReflection.GetProperty(rsp, "Data") ??
-                PoslinkReflection.GetProperty(rsp, "ReportItems") ??
-                PoslinkReflection.GetProperty(rsp, "HistoryList") ??
-                PoslinkReflection.GetProperty(rsp, "HistoryItems") ??
-                PoslinkReflection.GetProperty(rsp, "HostDetails") ??
-                PoslinkReflection.GetProperty(rsp, "BatchHistoryList");
-
-            if (rowsObj == null)
-            {
-                Logger.Info("ExtractRowsFromResponse: no obvious collection property, scanning enumerables");
-
-                foreach (var pi in rsp.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance))
-                {
-                    try
-                    {
-                        var val = pi.GetValue(rsp);
-                        Logger.Info("  rsp." + pi.Name + " => " + DescribeValue(val));
-
-                        if (rowsObj == null && IsEnumerableButNotString(val))
-                        {
-                            rowsObj = val;
-                            Logger.Info("ExtractRowsFromResponse: using enumerable rsp." + pi.Name);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.Info("  rsp property error: " + ex.Message);
-                    }
-                }
-            }
-
-            if (!(rowsObj is IEnumerable rows))
-                return list;
-
-            int i = 1;
-            foreach (var item in rows)
-            {
-                if (item == null) continue;
-                if (list.Count >= takeCount) break;
-
-                DumpObject("HistoryRow[" + i + "]", item);
-
-                var row = BuildRowFromItem(item, fallbackType);
-                if (IsEmptyRow(row))
-                    continue;
-
-                row.Index = i++;
-                list.Add(row);
-            }
-
-            return list;
-        }
-
         private static LastTxnRow BuildRowFromItem(object item, string fallbackType)
         {
             var amtInfo = PoslinkReflection.GetProperty(item, "AmountInformation");
@@ -281,19 +196,9 @@ namespace plink4
             {
                 Type = ReadString(item, "EdcType", "TransactionType", "Type", "CardType"),
                 RecordNumber = ReadInt(item, "RecordNumber"),
-
-                TransactionNumber = ReadString(
-                    item,
-                    "TransactionNumber", "ReferenceNumber", "TraceNumber", "InvoiceNumber", "TransactionId"),
-
-                AuthNumber = ReadString(
-                    item,
-                    "AuthorizationCode", "AuthCode", "ApprovalNumber", "AuthNumber"),
-
-                Amount = ReadDecimal(
-                    item,
-                    "ApprovedAmount", "Amount", "TransactionAmount", "TotalAmount", "BaseAmount"),
-
+                TransactionNumber = ReadString(item, "TransactionNumber", "ReferenceNumber", "TraceNumber", "InvoiceNumber", "TransactionId"),
+                AuthNumber = ReadString(item, "AuthorizationCode", "AuthCode", "ApprovalNumber", "AuthNumber"),
+                Amount = ReadDecimal(item, "ApprovedAmount", "Amount", "TransactionAmount", "TotalAmount", "BaseAmount"),
                 Last4 = ReadLast4(item)
             };
 
@@ -352,19 +257,18 @@ namespace plink4
 
             string[] edcCandidates =
             {
-        "Credit",
-        "Debit",
-        "Ebt",
-        "Gift",
-        "Cash",
-        "Loyalty",
-        "QrPayment",
-        "Other"
-    };
+                "Credit",
+                "Debit",
+                "Ebt",
+                "Gift",
+                "Cash",
+                "Loyalty",
+                "QrPayment",
+                "Other"
+            };
 
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            // First try "last transaction" per EDC
             foreach (var edcName in edcCandidates)
             {
                 try
@@ -385,7 +289,6 @@ namespace plink4
                 }
             }
 
-            // If still not enough, try record-number scan
             if (list.Count < takeCount)
             {
                 foreach (var edcName in edcCandidates)
@@ -410,7 +313,6 @@ namespace plink4
                 }
             }
 
-            // Prefer highest record number first when available
             list.Sort((x, y) => y.RecordNumber.CompareTo(x.RecordNumber));
 
             for (int i = 0; i < list.Count; i++)
@@ -426,6 +328,7 @@ namespace plink4
         private static string BuildRowKey(LastTxnRow row)
         {
             if (row == null) return "";
+
             return string.Join("|",
                 Safe(row.TransactionNumber),
                 Safe(row.Last4),
@@ -451,7 +354,6 @@ namespace plink4
                 return;
             }
 
-            // use transaction number as first column, not row index
             int col1 = Math.Max(1, "#".Length);
             int col2 = Math.Max(4, "card".Length);
             int col3 = Math.Max(6, "amount".Length);
@@ -522,15 +424,10 @@ namespace plink4
             if (recordNumber.HasValue)
                 SetIntIfExists(req, "RecordNumber", recordNumber.Value);
 
-       //     DumpObject("LocalDetailReport.req", req);
-
             int rc = PoslinkReflection.InvokeTxMethod(report, "LocalDetailReport", req, ref rsp);
 
             Logger.Info("LocalDetailReport rc=" + rc);
             Logger.Info("LocalDetailReport rsp type=" + (rsp == null ? "(null)" : rsp.GetType().FullName));
-
-            if (rsp != null)
-      //          DumpObject("LocalDetailReport.rsp", rsp);
 
             if (rc != 0 || rsp == null)
                 return null;
@@ -565,7 +462,7 @@ namespace plink4
             var row = new LastTxnRow
             {
                 Type = ReadString(rsp, "EdcType", "TransactionType"),
-                Amount = ReadDecimal(amtInfo, "ApprovedAmount", "Amount", "TransactionAmount", "TotalAmount", "BaseAmount"),
+                Amount = ReadAmountInCents(amtInfo, "ApprovedAmount", "Amount", "TransactionAmount", "TotalAmount", "BaseAmount"),
                 Last4 = ReadLast4(acctInfo),
                 RecordNumber = ReadInt(rsp, "RecordNumber"),
                 TransactionNumber = ReadString(traceInfo, "TransactionNumber", "ReferenceNumber", "TraceNumber", "InvoiceNumber", "TransactionId", "EcrReferenceNumber", "HostReferenceNumber"),
@@ -588,7 +485,7 @@ namespace plink4
                 row.AuthNumber = ReadString(traceInfo, "AuthorizationCode", "AuthCode", "ApprovalNumber", "AuthNumber");
 
             if (row.Amount == 0m)
-                row.Amount = ReadDecimal(rsp, "Amount", "ApprovedAmount", "TransactionAmount", "TotalAmount");
+                row.Amount = ReadAmountInCents(rsp, "Amount", "ApprovedAmount", "TransactionAmount", "TotalAmount", "BaseAmount");
 
             if (string.IsNullOrWhiteSpace(row.Last4))
                 row.Last4 = ReadLast4(cardInfo);
@@ -599,15 +496,15 @@ namespace plink4
             return row;
         }
 
-      
-
         private static void WriteError(string msg)
         {
             EnsureOutputFolder();
+
             var sb = new StringBuilder();
             sb.AppendLine("ResultCode: ERROR");
             sb.AppendLine("Date: " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
             sb.AppendLine(Safe(msg));
+
             File.WriteAllText(AppConfig.Last10Transactions, sb.ToString());
         }
 
@@ -619,7 +516,9 @@ namespace plink4
         }
 
         private static string Safe(string value)
-            => string.IsNullOrWhiteSpace(value) ? "" : value.Replace("|", " ");
+        {
+            return string.IsNullOrWhiteSpace(value) ? "" : value.Replace("|", " ");
+        }
 
         private static string ReadString(object obj, params string[] names)
         {
@@ -651,15 +550,73 @@ namespace plink4
                 var val = PoslinkReflection.GetProperty(obj, name);
                 if (val == null) continue;
 
-                try { return Convert.ToDecimal(val); } catch { }
+                string raw = Convert.ToString(val)?.Trim();
+                if (string.IsNullOrWhiteSpace(raw))
+                    continue;
 
-                if (decimal.TryParse(Convert.ToString(val), out var d))
-                    return d;
+                raw = raw.Replace(",", "");
+
+                if (!decimal.TryParse(raw, out decimal parsed))
+                    continue;
+
+                decimal normalized = NormalizePoslinkAmount(parsed, raw);
+
+                Logger.Info($"ReadDecimal: {obj.GetType().Name}.{name} raw='{raw}' parsed={parsed} normalized={normalized:0.00}");
+
+                return normalized;
             }
 
             return 0m;
         }
+        private static decimal ReadAmountInCents(object obj, params string[] names)
+        {
+            if (obj == null || names == null) return 0m;
 
+            foreach (var name in names)
+            {
+                if (string.IsNullOrWhiteSpace(name)) continue;
+
+                var val = PoslinkReflection.GetProperty(obj, name);
+                if (val == null) continue;
+
+                string raw = Convert.ToString(val)?.Trim();
+                if (string.IsNullOrWhiteSpace(raw))
+                    continue;
+
+                raw = raw.Replace(",", "");
+
+                if (!decimal.TryParse(raw, out decimal parsed))
+                    continue;
+
+                Logger.Info($"ReadAmountInCents: {obj.GetType().Name}.{name} raw='{raw}' parsed={parsed}");
+
+                return parsed / 100m;
+            }
+
+            return 0m;
+        }
+        private static decimal NormalizePoslinkAmount(decimal parsed, string raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+                return parsed;
+
+            raw = raw.Trim();
+
+            // already a true decimal amount like 2.54 or 19.99
+            if (parsed != decimal.Truncate(parsed))
+                return parsed;
+
+            // integer-like values are usually cents in POSLink
+            // 254 -> 2.54
+            // 10000 -> 100.00
+            // 254.00 -> 2.54
+            if (Math.Abs(parsed) >= 100m)
+                return parsed / 100m;
+
+            // keep tiny whole-number amounts as-is
+            // 0, 1, 2, etc.
+            return parsed;
+        }
         private static int ReadInt(object obj, params string[] names)
         {
             if (obj == null || names == null) return 0;
@@ -701,11 +658,6 @@ namespace plink4
                 return d.Substring(d.Length - 4);
 
             return raw.Length <= 4 ? raw : raw.Substring(raw.Length - 4);
-        }
-
-        private static bool IsEnumerableButNotString(object obj)
-        {
-            return obj != null && !(obj is string) && obj is IEnumerable;
         }
 
         private static void SetIntIfExists(object obj, string propName, int value)

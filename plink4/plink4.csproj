@@ -69,6 +69,7 @@
     <Compile Include="ArgsParser.cs" />
     <Compile Include="DoBatchCloseHandler.cs" />
     <Compile Include="CommandRouter.cs" />
+    <Compile Include="DoCreditAdjustHandler.cs" />
     <Compile Include="DoCreditHandler.cs" />
     <Compile Include="DoDebitHandler.cs" />
     <Compile Include="DoEbtHandler.cs" />

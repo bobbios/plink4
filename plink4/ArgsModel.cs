@@ -16,7 +16,7 @@
         public string Surcharge;
 
         public string PreTipFlag;
-        public string ApprovalCode;
-        public string TransactionId;
+        public string ApprovalCode { get; set; }
+        public string TransactionId { get; set; }
     }
 }
