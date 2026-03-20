@@ -8,127 +8,41 @@ namespace plink4
     {
         public static int Run(ArgsModel model)
         {
-            Logger.Info("Starting DoBatchCloseHandler");
-
             try
             {
-                var term = CommandRouter.ConnectTerminal(model);
+                object terminal = CommandRouter.ConnectTerminal(model)
+                    ?? throw new InvalidOperationException("Terminal connection failed.");
 
-                var report = PoslinkReflection.GetProperty(term, "Report");
-                if (report != null)
-                {
-                    Logger.Info("report type=" + report.GetType().FullName);
-
-                    foreach (var m in report.GetType().GetMethods(BindingFlags.Public | BindingFlags.Instance))
-                    {
-                        if (m.Name.IndexOf("Batch", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                            m.Name.IndexOf("Total", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                            m.Name.IndexOf("Summary", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                            m.Name.IndexOf("Report", StringComparison.OrdinalIgnoreCase) >= 0)
-                        {
-                            Logger.Info("  report method: " + m.Name);
-                        }
-                    }
-                }
-                else
-                {
-                    Logger.Info("report = null");
-                }
-
-                Logger.Info("term type=" + term.GetType().FullName);
-
-                foreach (var pi in term.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance))
-                {
-                    try
-                    {
-                        var v = pi.GetValue(term);
-                        Logger.Info("  term." + pi.Name + " = " + (v == null ? "(null)" : v.GetType().FullName));
-                    }
-                    catch
-                    {
-                        Logger.Info("  term." + pi.Name + " = (error reading)");
-                    }
-                }
-
-                object target =
-                    PoslinkReflection.GetProperty(term, "Batch") ??
-                    PoslinkReflection.GetProperty(term, "Transaction") ??
-                    term;
+                object target = PoslinkReflection.GetProperty(terminal, "Batch")
+                              ?? PoslinkReflection.GetProperty(terminal, "Transaction")
+                              ?? terminal;
 
                 if (target == null)
-                    throw new Exception("Could not find Batch or Transaction object on terminal.");
+                    throw new InvalidOperationException("Could not find Batch or Transaction object on terminal.");
 
-                Logger.Info("BatchClose target type=" + target.GetType().FullName);
-
-                foreach (var m in target.GetType().GetMethods(BindingFlags.Public | BindingFlags.Instance))
-                {
-                    if (m.Name.IndexOf("Batch", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                        m.Name.IndexOf("Close", StringComparison.OrdinalIgnoreCase) >= 0)
-                    {
-                        Logger.Info("  method: " + m.Name);
-                    }
-                }
-
-                var req = PoslinkReflection.CreateRequest("BatchClose");
+                object req = PoslinkReflection.CreateRequest("BatchClose");
                 object rsp = PoslinkReflection.CreateResponse("BatchClose");
-
-                Logger.Info("req type=" + req.GetType().FullName);
 
                 PoslinkRequestBuilder.ApplyTrace(req, model.RefNum);
 
                 int rc = PoslinkReflection.InvokeTxMethod(target, "BatchClose", req, ref rsp);
 
-                Logger.Info("BatchClose returned rc=" + rc);
-
-
-                DumpObject("rsp.TotalCount", GetProp(rsp, "TotalCount"));
-                DumpObject("rsp.TotalAmount", GetProp(rsp, "TotalAmount"));
-                DumpObject("rsp.TipCount", GetProp(rsp, "TipCount"));
-                DumpObject("rsp.TipAmount", GetProp(rsp, "TipAmount"));
-                DumpObject("rsp.HostInformation", GetProp(rsp, "HostInformation"));
-                DumpObject("rsp.TorInformation", GetProp(rsp, "TorInformation"));
-
-
-                Logger.Info("rsp type=" + (rsp == null ? "(null)" : rsp.GetType().FullName));
-
-                if (rsp != null)
-                {
-                    Logger.Info("--- BatchClose RESPONSE PROPERTIES ---");
-
-                    foreach (var pi in rsp.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance))
-                    {
-                        try
-                        {
-                            var val = pi.GetValue(rsp);
-                            Logger.Info("  rsp." + pi.Name + " = " + (val == null ? "(null)" : val.ToString()));
-                        }
-                        catch (Exception ex)
-                        {
-                            Logger.Info("  rsp." + pi.Name + " = (error: " + ex.Message + ")");
-                        }
-                    }
-                }
-
                 LegacyResponseWriter.WriteDump(rsp);
                 WriteBatchCloseResponse(rc, rsp);
 
-                Logger.Info("DoBatchCloseHandler complete rc=" + rc);
                 return rc;
             }
             catch (Exception ex)
             {
-                Logger.Error("DoBatchCloseHandler fatal: " + ex.Message);
-                Logger.Error(ex.ToString());
-
                 WriteBatchCloseResponse(1, null);
 
                 LegacyResponseWriter.WriteLegacy(
-                    model.CardType,
-                    model.TxnType,
-                    ok: false,
-                    responseMessage: ex.Message,
-                    responseCode: "EX",
-                    authCode: ""
+                    model?.CardType ?? "",
+                    model?.TxnType ?? "",
+                    false,
+                    ex.Message,
+                    "EX",
+                    ""
                 );
 
                 return 1;
@@ -141,7 +55,9 @@ namespace plink4
             string responseMessage = GetString(rsp, "ResponseMessage");
 
             bool ok = rc == 0 &&
-                      (string.IsNullOrWhiteSpace(responseCode) || responseCode == "000000" || responseCode == "0");
+                      (string.IsNullOrWhiteSpace(responseCode) ||
+                       responseCode == "000000" ||
+                       responseCode == "0");
 
             string resultCode = ok ? "0" : FirstNonEmpty(responseCode, rc.ToString());
             string resultTxt = ok ? "OK" : FirstNonEmpty(responseMessage, "ERROR");
@@ -162,7 +78,6 @@ namespace plink4
 
             string creditTipCount = GetString(tipCount, "CreditTipCount");
             string debitTipCount = GetString(tipCount, "DebitTipCount");
-
             string creditTipAmount = GetString(tipAmount, "CreditTipAmount");
             string debitTipAmount = GetString(tipAmount, "DebitTipAmount");
 
@@ -201,7 +116,6 @@ namespace plink4
                 Directory.CreateDirectory(dir);
 
             File.WriteAllText(AppConfig.BatchResponse, text);
-            Logger.Info("Batch close response written to " + AppConfig.BatchResponse);
         }
 
         private static object GetProp(object obj, string prop)
@@ -227,39 +141,12 @@ namespace plink4
             }
         }
 
-
-        private static void DumpObject(string label, object obj)
-        {
-            if (obj == null)
-            {
-                Logger.Info(label + " = (null)");
-                return;
-            }
-
-            Logger.Info(label + " type=" + obj.GetType().FullName);
-
-            foreach (var pi in obj.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance))
-            {
-                try
-                {
-                    var val = pi.GetValue(obj);
-                    Logger.Info("  " + label + "." + pi.Name + " = " + (val == null ? "(null)" : val.ToString()));
-                }
-                catch (Exception ex)
-                {
-                    Logger.Info("  " + label + "." + pi.Name + " = (error: " + ex.Message + ")");
-                }
-            }
-        }
-
-
         private static string FirstNonEmpty(params string[] values)
         {
             foreach (var v in values)
-            {
                 if (!string.IsNullOrWhiteSpace(v))
                     return v;
-            }
+
             return "";
         }
     }

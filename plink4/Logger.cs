@@ -6,9 +6,21 @@ namespace plink4
 {
     internal static class Logger
     {
+        // Fixed subfolder for **only** the daily program logs
+        private const string LogFolderName = "log";
+
+        // Full path to log folder: c:\newretail\card\log\
+        private static readonly string LogDirectory = Path.Combine(
+            @"c:\newretail\card",
+            LogFolderName);
+
         public static void EnsureFolders()
         {
-            EnsureFolder(AppConfig.LogPath);
+            // Create c:\newretail\card\log\ if it doesn't exist
+            if (!Directory.Exists(LogDirectory))
+                Directory.CreateDirectory(LogDirectory);
+
+            // Keep ensuring the other output folders (they stay in their original places)
             EnsureFolder(AppConfig.OutResponse);
             EnsureFolder(AppConfig.OutResponse2);
             EnsureFolder(AppConfig.BatchResponse);
@@ -17,15 +29,8 @@ namespace plink4
 
         public static void LogStartup(string[] args)
         {
-            Info("-----------------------------");
-            Info("Start plink4");
-            Info("Args count = " + (args == null ? 0 : args.Length));
-
-            if (args != null)
-            {
-                for (int i = 0; i < args.Length; i++)
-                    Info($"args[{i}] = '{args[i]}'");
-            }
+            Info("*****************************");
+            Info("*****************************");
         }
 
         public static void Info(string msg,
@@ -47,21 +52,38 @@ namespace plink4
         private static void Write(string level, string msg, string member, string file, int line)
         {
             var fileName = Path.GetFileNameWithoutExtension(file);
-            var location = fileName + "." + member + "." + line;
+            var location = $"{fileName}.{member}.{line}";
 
-            var lineText =
-                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") +
-                "  " + level + ": " +
-                location + "  " +
-                msg +
-                Environment.NewLine;
+            // Daily file **inside** the log folder
+            string datePart = DateTime.Now.ToString("yy-MM-dd");
+            string logFileName = $"plink4-{datePart}.txt";
+            string logFilePath = Path.Combine(LogDirectory, logFileName);
 
-            File.AppendAllText(AppConfig.LogPath, lineText);
-            Console.WriteLine(lineText);
+            var lineText = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} {level}: {location} {msg}{Environment.NewLine}";
+
+            try
+            {
+                // Ensure log folder exists
+                Directory.CreateDirectory(LogDirectory);
+
+                // Append to daily log file inside log folder
+                File.AppendAllText(logFilePath, lineText);
+
+                // Write to console
+                Console.WriteLine(lineText);
+            }
+            catch (Exception ex)
+            {
+                // Fallback: console only
+                Console.WriteLine($"[LOGGER ERROR] Cannot write to {logFilePath}: {ex.Message}");
+                Console.WriteLine(lineText);
+            }
         }
 
         private static void EnsureFolder(string filePath)
         {
+            if (string.IsNullOrWhiteSpace(filePath)) return;
+
             var dir = Path.GetDirectoryName(filePath);
             if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
                 Directory.CreateDirectory(dir);

@@ -7,219 +7,133 @@ namespace plink4
     {
         public static int Execute(ArgsModel model)
         {
-            if (model == null) throw new ArgumentNullException(nameof(model));
-
-            Logger.Info(
-                $"ref={model.RefNum} amt={model.Amount} surcharge={model.Surcharge} " +
-                $"cardType={model.CardType} type={model.TxnType} ip={model.Ip} " +
-                $"tcpFlag={model.TcpFlag} argPort={model.ArgPort} origRef={model.OriginalRef} " +
-                $"preTip={model.PreTipFlag} approval={model.ApprovalCode} transactionId={model.TransactionId}");
-
-            if (model.CardType == "BATCHCLOSE")
+            if (model == null)
             {
-                Logger.Info("ROUTE CHECK: calling DoBatchCloseHandler");
-                return DoBatchCloseHandler.Run(model);
+                throw new ArgumentNullException(nameof(model));
             }
 
-            if (model.CardType == "LASTTRANSACTION")
+            try
             {
-                Logger.Info("ROUTE CHECK: calling LastTransactionHandler");
-                return LastTransactionHandler.Run(model);
+                // Special / non-credit/debit flows
+                if (model.CardType == "BATCHCLOSE")
+                    return DoBatchCloseHandler.Run(model);
+
+                if (model.CardType == "LASTTRANSACTION")
+                    return LastTransactionHandler.Run(model);
+
+                if (string.Equals(model.TxnType, "ADJUST", StringComparison.OrdinalIgnoreCase))
+                    return DoCreditAdjustHandler.Run(model);
+
+
+                if (model.CardType == "EBT_FOOD" && model.TxnType == "BALANCE")
+                {
+                    return DoEbtBalanceHandler.Run(model, "F");
+                }
+
+                if (model.CardType == "EBT_CASH" && model.TxnType == "BALANCE")
+                {
+                    return DoEbtBalanceHandler.Run(model, "C");
+                }
+
+                // Standard payment flows
+                object terminal = ConnectTerminal(model);
+
+                object response = null;
+                int returnCode;
+
+                string cardTypeUpper = (model.CardType ?? "").Trim().ToUpperInvariant();
+
+                switch (cardTypeUpper)
+                {
+                    case "CREDIT":
+                        returnCode = DoCreditHandler.Run(terminal, model, out response);
+                        break;
+
+                    case "DEBIT":
+                        returnCode = DoDebitHandler.Run(terminal, model, out response);
+                        break;
+
+                    case "EBT_CASHBENEFIT":
+                    case "EBT_CASH":
+                    case "EBT_FOODSTAMP":
+                    case "EBT_FOOD":
+                        returnCode = DoEbtHandler.Run(terminal, model, out response);
+                        break;
+
+                    default:
+                        throw new NotSupportedException($"Unsupported CardType: {model.CardType}");
+                }
+
+                LegacyResponseWriter.WriteDump(response);
+                LegacyResponseWriter.WriteFromRsp(model.CardType, model.TxnType, returnCode == 0, response);
+
+                return returnCode;
             }
-
-            var term = ConnectTerminal(model);
-
-            object rspObj;
-            int rc;
-
-            // Handle ADJUST first because it is based on txn type (4th argument)
-            if (string.Equals(model.TxnType, "ADJUST", StringComparison.OrdinalIgnoreCase))
+            catch (Exception ex)
             {
-                Logger.Info("ROUTE CHECK: calling DoCreditAdjustHandler");
-                return DoCreditAdjustHandler.Run(model);
+                // Minimal error reporting – rethrow or log minimally
+                // (remove Logger if you don't want any logging here)
+                // Logger?.Error($"CommandRouter.Execute failed: {ex.Message}");
+                throw;
             }
-
-            switch ((model.CardType ?? "").Trim().ToUpperInvariant())
-            {
-                case "CREDIT":
-                    Logger.Info("ROUTE CHECK: calling DoCreditHandler");
-                    rc = DoCreditHandler.Run(term, model, out rspObj);
-                    break;
-
-                case "DEBIT":
-                    Logger.Info("ROUTE CHECK: calling DoDebitHandler");
-                    rc = DoDebitHandler.Run(term, model, out rspObj);
-                    break;
-
-                case "EBT_CASHBENEFIT":
-                case "EBT_CASH":
-                    Logger.Info("ROUTE CHECK: calling DoEbtHandler");
-                    rc = DoEbtHandler.Run(term, model, out rspObj);
-                    break;
-
-                case "EBT_FOODSTAMP":
-                case "EBT_FOOD":
-                    Logger.Info("ROUTE CHECK: calling DoEbtHandler");
-                    rc = DoEbtHandler.Run(term, model, out rspObj);
-                    break;
-
-                default:
-                    throw new Exception("Unsupported CardType: " + model.CardType);
-            }
-
-            LegacyResponseWriter.WriteDump(rspObj);
-            LegacyResponseWriter.WriteFromRsp(model.CardType, model.TxnType, rc == 0, rspObj);
-
-            Logger.Info("Done. rc=" + rc);
-            return rc;
         }
-
-        /// <summary>
-        /// Builds a CommunicationSetting, passes it to POSLinkSemi.GetTerminal(setting),
-        /// and returns the Terminal object which has Transaction / Report / Batch on it.
-        /// </summary>
-        /// 
 
         internal static object ConnectTerminal(ArgsModel model)
         {
-            Logger.Info($"ConnectTerminal: {model.Ip}:{model.ArgPort}");
+            const string SemiFullName = "POSLinkSemiIntegration.POSLinkSemi, POSLinkSemiIntegration";
+            const string TcpSettingType = "POSLinkCore.CommunicationSetting.TcpSetting, POSLinkCore";
 
-            // 1. Find POSLinkSemi exact type
-            var semiType = Type.GetType(
-                "POSLinkSemiIntegration.POSLinkSemi, POSLinkSemiIntegration",
-                throwOnError: false);
+            Type semiType = Type.GetType(SemiFullName, throwOnError: false)
+                ?? throw new InvalidOperationException("POSLinkSemi type not found.");
 
-            if (semiType == null)
-                throw new Exception("POSLinkSemi type not found.");
+            object semi = GetStaticFieldOrSingleton(semiType)
+                ?? Activator.CreateInstance(semiType)
+                ?? throw new InvalidOperationException("Cannot obtain/create POSLinkSemi instance.");
 
-            // 2. Get singleton / instance
-            object semi =
-                GetStaticFieldValue(semiType, "_poslinkSemi") ??
-                TryStaticFactory(semiType, "GetPOSLinkSemi") ??
-                Activator.CreateInstance(semiType);
+            Type tcpType = Type.GetType(TcpSettingType, throwOnError: false)
+                ?? throw new InvalidOperationException("TcpSetting type not found.");
 
-            if (semi == null)
-                throw new Exception("Could not create/get POSLinkSemi instance.");
+            object tcp = Activator.CreateInstance(tcpType)
+                ?? throw new InvalidOperationException("Cannot create TcpSetting instance.");
 
-            Logger.Info("ConnectTerminal: semi=" + semi.GetType().FullName);
+            SetPropertyValue(tcp, "Ip", model.Ip);
+            SetPropertyValue(tcp, "Port", model.ArgPort);
+            SetPropertyValue(tcp, "Timeout", AppConfig.TimeoutMs);
 
-            // 3. Force TCP setting exact type
-            var commType = Type.GetType(
-                "POSLinkCore.CommunicationSetting.TcpSetting, POSLinkCore",
-                throwOnError: false);
+            MethodInfo getTerminalMethod = semiType.GetMethod("GetTerminal", new[] { tcpType })
+                ?? throw new InvalidOperationException("GetTerminal(TcpSetting) method not found.");
 
-            if (commType == null)
-                throw new Exception("TcpSetting type not found.");
+            object terminal = getTerminalMethod.Invoke(semi, new[] { tcp })
+                ?? throw new InvalidOperationException("GetTerminal returned null.");
 
-            Logger.Info("ConnectTerminal: commType=" + commType.FullName);
-
-            var comm = Activator.CreateInstance(commType);
-            if (comm == null)
-                throw new Exception("Could not create TcpSetting.");
-
-            Logger.Info("--- TcpSetting PROPERTIES ---");
-            foreach (var pi in commType.GetProperties(BindingFlags.Public | BindingFlags.Instance))
-                Logger.Info("  " + pi.Name + " (" + pi.PropertyType.Name + ")");
-
-            // 4. Set required TCP fields
-            SetRequiredProperty(comm, "Ip", model.Ip);
-            SetRequiredProperty(comm, "Port", model.ArgPort);
-            SetRequiredProperty(comm, "Timeout", AppConfig.TimeoutMs);
-
-            Logger.Info($"ConnectTerminal: comm set ip={model.Ip} port={model.ArgPort} timeout={AppConfig.TimeoutMs}");
-
-            // 5. Find GetTerminal method
-            var getTerminal = semiType.GetMethod(
-                "GetTerminal",
-                BindingFlags.Public | BindingFlags.Instance,
-                null,
-                new[] { commType },
-                null);
-
-            if (getTerminal == null)
-            {
-                foreach (var m in semiType.GetMethods(BindingFlags.Public | BindingFlags.Instance))
-                {
-                    if (m.Name != "GetTerminal") continue;
-
-                    var ps = m.GetParameters();
-                    if (ps.Length == 1)
-                    {
-                        getTerminal = m;
-                        Logger.Info("ConnectTerminal: fallback GetTerminal overload = " + ps[0].ParameterType.FullName);
-                        break;
-                    }
-                }
-            }
-
-            if (getTerminal == null)
-                throw new Exception("GetTerminal(TcpSetting) method not found on " + semiType.FullName);
-
-            Logger.Info("ConnectTerminal: calling GetTerminal(TcpSetting)");
-            var term = getTerminal.Invoke(semi, new[] { comm });
-
-            if (term == null)
-                throw new Exception("GetTerminal returned null.");
-
-            Logger.Info("ConnectTerminal: terminal type=" + term.GetType().FullName);
-
-            Logger.Info("--- Terminal PROPERTIES ---");
-            foreach (var pi in term.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance))
-            {
-                try
-                {
-                    var v = pi.GetValue(term);
-                    Logger.Info("  term." + pi.Name + " = " + (v == null ? "(null)" : v.GetType().FullName));
-                }
-                catch
-                {
-                    Logger.Info("  term." + pi.Name + " = (error)");
-                }
-            }
-
-            return term;
+            return terminal;
         }
 
-        private static void SetRequiredProperty(object obj, string propName, object value)
+        // Very minimal singleton/field fallback
+        private static object GetStaticFieldOrSingleton(Type type)
         {
-            var pi = obj.GetType().GetProperty(propName, BindingFlags.Public | BindingFlags.Instance);
-            if (pi == null)
-                throw new Exception($"Property '{propName}' not found on {obj.GetType().FullName}");
-
-            object finalValue = value;
-
-            if (value != null)
-            {
-                var targetType = Nullable.GetUnderlyingType(pi.PropertyType) ?? pi.PropertyType;
-
-                if (!targetType.IsAssignableFrom(value.GetType()))
-                    finalValue = Convert.ChangeType(value, targetType);
-            }
-
-            pi.SetValue(obj, finalValue, null);
-            Logger.Info($"SetRequiredProperty: {obj.GetType().Name}.{propName} = {finalValue}");
+            // Try common singleton patterns
+            return type.GetField("_poslinkSemi", BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null)
+                ?? type.GetMethod("GetPOSLinkSemi", BindingFlags.Public | BindingFlags.Static)?.Invoke(null, null);
         }
 
-        private static object GetStaticFieldValue(Type type, string fieldName)
+        private static void SetPropertyValue(object target, string name, object value)
         {
-            try
-            {
-                var fi = type.GetField(fieldName,
-                    BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance);
-                return fi?.GetValue(null);
-            }
-            catch { return null; }
-        }
+            if (value == null) return;
 
-        private static object TryStaticFactory(Type type, string methodName)
-        {
-            try
+            PropertyInfo prop = target.GetType().GetProperty(name, BindingFlags.Public | BindingFlags.Instance)
+                ?? throw new InvalidOperationException($"Property '{name}' not found on {target.GetType().Name}.");
+
+            object converted = value;
+
+            Type targetType = Nullable.GetUnderlyingType(prop.PropertyType) ?? prop.PropertyType;
+
+            if (!targetType.IsAssignableFrom(value.GetType()))
             {
-                var m = type.GetMethod(methodName,
-                    BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy);
-                return m?.Invoke(null, null);
+                converted = Convert.ChangeType(value, targetType);
             }
-            catch { return null; }
+
+            prop.SetValue(target, converted);
         }
     }
 }

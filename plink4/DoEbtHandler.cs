@@ -1,200 +1,168 @@
 ﻿using System;
 using System.Globalization;
-using System.Reflection;
 
 namespace plink4
 {
     internal static class DoEbtHandler
     {
-        public static int Run(object term, ArgsModel a, out object rsp)
+        public static int Run(object term, ArgsModel model, out object response)
         {
-            rsp = null;
+            response = null;
 
-            Logger.Info("DoEbtHandler.Run ENTER");
-            Logger.Info($"DoEbtHandler.Run ref={a?.RefNum} amt={a?.Amount} txnType={a?.TxnType} cardType={a?.CardType}");
+            if (term == null) throw new ArgumentNullException(nameof(term));
+            if (model == null) throw new ArgumentNullException(nameof(model));
 
-            if (term == null) throw new Exception("term is null.");
-            if (a == null) throw new Exception("ArgsModel is null.");
+            try
+            {
+                object transaction = PoslinkReflection.RequireProperty(
+                    term,
+                    "Transaction",
+                    "Transaction property is null on terminal object."
+                );
 
-            var tx = PoslinkReflection.RequireProperty(term, "Transaction", "Terminal.Transaction is null.");
+                object request = PoslinkReflection.CreateRequest("DoEbt");
 
-            var req = PoslinkReflection.CreateRequest("DoEbt");
-            rsp = PoslinkReflection.CreateResponse("DoEbt");
+                // You can try removing this line if InvokeTxMethod populates response directly
+                object responseObj = PoslinkReflection.CreateResponse("DoEbt");
 
-            Logger.Info("DoEbtHandler: req type = " + req.GetType().FullName);
-            DumpRequestProperties(req);
+                ApplyTransactionType(request, model);
+                ApplyTrace(request, model);
+                ApplyEbtType(request, model);
+                ApplyAmounts(request, model);
 
-            ApplyTransactionType(req, a);
-            ApplyTrace(req, a);
-            ApplyEbtType(req, a);
-            ApplyAmounts(req, a);
+                int returnCode = PoslinkReflection.InvokeTxMethod(
+                    transaction,
+                    "DoEbt",
+                    request,
+                    ref responseObj
+                );
 
-            Logger.Info("DoEbtHandler: invoking DoEbt");
-            int rc = PoslinkReflection.InvokeTxMethod(tx, "DoEbt", req, ref rsp);
-
-            Logger.Info("DoEbtHandler: done rc=" + rc);
-            return rc;
+                response = responseObj;
+                return returnCode;
+            }
+            catch (Exception)
+            {
+                throw; // Let CommandRouter handle exceptions
+            }
         }
 
-        private static void ApplyTransactionType(object req, ArgsModel a)
+        private static void ApplyTransactionType(object req, ArgsModel model)
         {
-            string txnType = (a.TxnType ?? "").Trim().ToUpperInvariant();
-            bool ok = false;
+            string txnType = (model.TxnType ?? "").Trim().ToUpperInvariant();
 
             switch (txnType)
             {
                 case "SALE":
-                    ok = PoslinkReflection.SetEnumProperty(req, "TransactionType", "Sale", "Purchase");
-                    Logger.Info("ApplyTransactionType: SALE enumSet=" + ok);
+                    PoslinkReflection.SetEnumProperty(req, "TransactionType", "Sale", "Purchase");
                     break;
 
                 case "RETURN":
-                    {
-                        bool okReturn = PoslinkReflection.SetEnumProperty(req, "TransactionType", "Return", "Refund");
-                        bool okOrig = PoslinkReflection.SetEnumProperty(req, "OriginalTransactionType", "Sale", "Purchase");
-                        Logger.Info($"ApplyTransactionType: RETURN enumSet={okReturn} origTxnSet={okOrig}");
-                        break;
-                    }
+                    PoslinkReflection.SetEnumProperty(req, "TransactionType", "Return", "Refund");
+                    PoslinkReflection.SetEnumProperty(req, "OriginalTransactionType", "Sale", "Purchase");
+                    break;
 
                 case "BALANCE":
                 case "BALANCEINQUIRY":
                 case "BALANCE_INQUIRY":
-                    ok = PoslinkReflection.SetEnumProperty(req, "TransactionType", "BalanceInquiry", "Balance");
-                    Logger.Info("ApplyTransactionType: BALANCE enumSet=" + ok);
+                    PoslinkReflection.SetEnumProperty(req, "TransactionType", "BalanceInquiry", "Balance");
                     break;
 
                 case "VOID":
-                    ok = PoslinkReflection.SetEnumProperty(req, "TransactionType", "Void");
-                    Logger.Info("ApplyTransactionType: VOID enumSet=" + ok);
+                    PoslinkReflection.SetEnumProperty(req, "TransactionType", "Void");
                     break;
 
                 default:
-                    throw new Exception("Unsupported EBT txn type: " + a.TxnType);
+                    throw new ArgumentException($"Unsupported EBT transaction type: {model.TxnType}");
             }
         }
 
-        private static void ApplyTrace(object req, ArgsModel a)
+        private static void ApplyTrace(object req, ArgsModel model)
         {
             var trace = PoslinkReflection.GetOrCreateProperty(req, "TraceInformation");
-            if (trace == null)
-            {
-                Logger.Info("ApplyTrace: TraceInformation not found");
-                return;
-            }
+            if (trace == null) return;
 
-            DumpChildProperties("TraceInformation", trace);
+            PoslinkReflection.SetProperty(trace, "EcrReferenceNumber", model.RefNum);
+            PoslinkReflection.SetProperty(trace, "InvoiceNumber", model.RefNum);
 
-            TrySet(trace, "EcrReferenceNumber", a.RefNum);
-            TrySet(trace, "InvoiceNumber", a.RefNum);
-
-            // ONLY set original refs if you actually have the original sale ref
-            if (!string.IsNullOrWhiteSpace(a.OriginalRef) && a.OriginalRef != "0")
-            {
-                TrySet(trace, "OriginalReferenceNumber", a.OriginalRef);
-                TrySet(trace, "OriginalEcrReferenceNumber", a.OriginalRef);
-            }
-
-            Logger.Info("ApplyTrace: ref=" + a.RefNum + " origRef=" + a.OriginalRef);
+            // Uncomment only if you later support original reference numbers
+            // if (!string.IsNullOrWhiteSpace(model.OriginalRef) && model.OriginalRef != "0")
+            // {
+            //     PoslinkReflection.SetProperty(trace, "OriginalReferenceNumber", model.OriginalRef);
+            //     PoslinkReflection.SetProperty(trace, "OriginalEcrReferenceNumber", model.OriginalRef);
+            // }
         }
 
-        private static void ApplyEbtType(object req, ArgsModel a)
+        private static void ApplyEbtType(object req, ArgsModel model)
         {
-            var acct = PoslinkReflection.GetOrCreateProperty(req, "AccountInformation");
-            if (acct == null)
-            {
-                Logger.Info("ApplyEbtType: AccountInformation not found");
-                return;
-            }
+            var account = PoslinkReflection.GetOrCreateProperty(req, "AccountInformation");
+            if (account == null) return;
 
-            DumpChildProperties("AccountInformation", acct);
-            DumpEnumValues(acct, "EbtType");
-            DumpEnumValues(acct, "CardType");
-
-            string cardType = (a.CardType ?? "").Trim().ToUpperInvariant();
-            bool okString = false;
-            bool okEnum = false;
+            string cardType = (model.CardType ?? "").Trim().ToUpperInvariant();
 
             switch (cardType)
             {
                 case "EBT_FOOD":
                 case "EBT_FOODSTAMP":
-                    okString = TrySet(acct, "EbtType", "FOODSTAMP");
-                    okEnum = PoslinkReflection.SetEnumProperty(acct, "EbtType",
-                        "FOODSTAMP", "FoodStamp", "Food", "F");
-                    Logger.Info($"ApplyEbtType: FOOD string={okString} enum={okEnum}");
+                    PoslinkReflection.SetProperty(account, "EbtType", "FOODSTAMP");
+                    PoslinkReflection.SetEnumProperty(account, "EbtType", "FOODSTAMP", "FoodStamp", "Food", "F");
                     break;
 
                 case "EBT_CASH":
                 case "EBT_CASHBENEFIT":
-                    okString = TrySet(acct, "EbtType", "CashBenefits");
-                    okEnum = PoslinkReflection.SetEnumProperty(acct, "EbtType",
-                        "CashBenefits", "CASHBENEFITS");
-                    Logger.Info($"ApplyEbtType: CASH string={okString} enum={okEnum}");
+                    PoslinkReflection.SetProperty(account, "EbtType", "CashBenefits");
+                    PoslinkReflection.SetEnumProperty(account, "EbtType", "CashBenefits", "CASHBENEFITS");
                     break;
 
                 default:
-                    throw new Exception("Unsupported EBT card type: " + a.CardType);
+                    throw new ArgumentException($"Unsupported EBT card type: {model.CardType}");
             }
         }
 
-        private static void ApplyAmounts(object req, ArgsModel a)
+        private static void ApplyAmounts(object req, ArgsModel model)
         {
-            string txnType = (a.TxnType ?? "").Trim().ToUpperInvariant();
-            string cardType = (a.CardType ?? "").Trim().ToUpperInvariant();
+            string txnType = (model.TxnType ?? "").Trim().ToUpperInvariant();
+            string cardType = (model.CardType ?? "").Trim().ToUpperInvariant();
 
-            var amt = PoslinkReflection.GetOrCreateProperty(req, "AmountInformation");
-            if (amt == null)
-            {
-                Logger.Info("ApplyAmounts: AmountInformation not found");
-                return;
-            }
+            var amounts = PoslinkReflection.GetOrCreateProperty(req, "AmountInformation");
+            if (amounts == null) return;
 
-            DumpChildProperties("AmountInformation", amt);
-
+            // No amount needed for balance inquiries
             if (txnType == "BALANCE" || txnType == "BALANCEINQUIRY" || txnType == "BALANCE_INQUIRY")
-            {
-                Logger.Info("ApplyAmounts: skipping amount for balance inquiry");
                 return;
-            }
 
-            decimal saleAmount = ParseAmount(a.Amount);
-            decimal cashBack = ParseAmount(a.Surcharge);
+            decimal saleAmount = ParseAmount(model.Amount);
+            decimal cashBack = ParseAmount(model.Surcharge);
 
-            TrySetMoney(amt, "TransactionAmount", saleAmount);
-
+            TrySetMoney(amounts, "TransactionAmount", saleAmount);
             if (txnType == "RETURN")
             {
-                TrySetMoney(amt, "OriginalAmount", saleAmount);
-
+                TrySetMoney(amounts, "OriginalAmount", saleAmount);
                 if (cardType == "EBT_CASH" || cardType == "EBT_CASHBENEFIT")
-                    TrySetMoney(amt, "CashBackAmount", 0m);
+                    TrySetMoney(amounts, "CashBackAmount", 0m);
             }
             else
             {
                 if ((cardType == "EBT_CASH" || cardType == "EBT_CASHBENEFIT") && cashBack > 0)
-                    TrySetMoney(amt, "CashBackAmount", cashBack);
+                    TrySetMoney(amounts, "CashBackAmount", cashBack);
             }
-
-            Logger.Info($"ApplyAmounts: sale={saleAmount:0.00} cashback={cashBack:0.00} cardType={cardType} txnType={txnType}");
         }
 
         private static bool TrySet(object obj, string propName, object value)
         {
-            bool ok = PoslinkReflection.SetProperty(obj, propName, value);
-            Logger.Info($"TrySet: {(ok ? "SET" : "MISS")} {obj.GetType().Name}.{propName} = {value}");
-            return ok;
+            return PoslinkReflection.SetProperty(obj, propName, value);
         }
 
         private static void TrySetMoney(object obj, string propName, decimal amount)
         {
             if (TrySet(obj, propName, amount)) return;
+
             if (TrySet(obj, propName, amount.ToString("0.00", CultureInfo.InvariantCulture))) return;
 
             int cents = (int)Math.Round(amount * 100m, 0, MidpointRounding.AwayFromZero);
             if (TrySet(obj, propName, cents)) return;
             if (TrySet(obj, propName, cents.ToString(CultureInfo.InvariantCulture))) return;
 
-            Logger.Info($"TrySetMoney: unable to set {obj.GetType().Name}.{propName} with amount={amount}");
+            // silent fail – continue without setting this field
         }
 
         private static decimal ParseAmount(string value)
@@ -204,70 +172,13 @@ namespace plink4
 
             value = value.Trim().Replace("$", "").Replace(",", "");
 
-            decimal result;
-            if (decimal.TryParse(value, NumberStyles.Any, CultureInfo.InvariantCulture, out result))
+            if (decimal.TryParse(value, NumberStyles.Any, CultureInfo.InvariantCulture, out decimal result))
                 return result;
 
             if (decimal.TryParse(value, NumberStyles.Any, CultureInfo.CurrentCulture, out result))
                 return result;
 
             return 0m;
-        }
-
-        private static void DumpEnumValues(object obj, string propName)
-        {
-            try
-            {
-                var pi = obj.GetType().GetProperty(propName, BindingFlags.Public | BindingFlags.Instance);
-                if (pi == null)
-                {
-                    Logger.Info($"DumpEnumValues: property {propName} not found");
-                    return;
-                }
-
-                var t = pi.PropertyType;
-                if (!t.IsEnum)
-                {
-                    Logger.Info($"DumpEnumValues: property {propName} is not enum");
-                    return;
-                }
-
-                Logger.Info($"--- ENUM VALUES FOR {obj.GetType().Name}.{propName} ---");
-                foreach (var name in Enum.GetNames(t))
-                    Logger.Info("  " + name);
-            }
-            catch (Exception ex)
-            {
-                Logger.Info("DumpEnumValues failed: " + ex.Message);
-            }
-        }
-
-        private static void DumpRequestProperties(object req)
-        {
-            try
-            {
-                Logger.Info("--- DoEbt Request PROPERTIES ---");
-                foreach (var pi in req.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance))
-                    Logger.Info($"  {pi.Name} ({pi.PropertyType.Name})");
-            }
-            catch (Exception ex)
-            {
-                Logger.Info("DumpRequestProperties failed: " + ex.Message);
-            }
-        }
-
-        private static void DumpChildProperties(string label, object obj)
-        {
-            try
-            {
-                Logger.Info($"--- {label} PROPERTIES ---");
-                foreach (var pi in obj.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance))
-                    Logger.Info($"  {label}.{pi.Name} ({pi.PropertyType.Name})");
-            }
-            catch (Exception ex)
-            {
-                Logger.Info($"DumpChildProperties failed for {label}: " + ex.Message);
-            }
         }
     }
 }

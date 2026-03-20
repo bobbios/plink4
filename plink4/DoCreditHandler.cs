@@ -4,34 +4,51 @@ namespace plink4
 {
     internal static class DoCreditHandler
     {
-        public static int Run(object semi, ArgsModel a, out object rsp)
+        public static int Run(object semi, ArgsModel model, out object response)
         {
-            rsp = null;
+            response = null;
 
-            Logger.Info("DoCreditHandler.Run ENTER");
-            Logger.Info($"DoCreditHandler.Run ref={a?.RefNum} amt={a?.Amount} txnType={a?.TxnType}");
+            // Replace ThrowIfNull with classic null checks
+            if (semi == null)
+                throw new ArgumentNullException(nameof(semi));
 
-            if (semi == null) throw new Exception("semi is null.");
-            if (a == null) throw new Exception("ArgsModel is null.");
+            if (model == null)
+                throw new ArgumentNullException(nameof(model));
 
-            // Transaction lives directly on the semi object
-            var tx = PoslinkReflection.RequireProperty(semi, "Transaction", "POSLinkSemiIntegration.Transaction is null.");
+            try
+            {
+                object transaction = PoslinkReflection.RequireProperty(
+                    semi,
+                    "Transaction",
+                    "Transaction property is null on semi object."
+                );
 
-            var req = PoslinkReflection.CreateRequest("DoCredit");
-            rsp = PoslinkReflection.CreateResponse("DoCredit");
+                object request = PoslinkReflection.CreateRequest("DoCredit");
+                // Note: CreateResponse is often unnecessary here – many POSLink implementations
+                //       return the response via the out parameter without needing a pre-created object.
+                //       You can try removing this line and see if InvokeTxMethod still works.
+                object responseObj = PoslinkReflection.CreateResponse("DoCredit");
 
-            Logger.Info("DoCreditHandler: req=" + req.GetType().FullName);
+                PoslinkRequestBuilder.ApplyTrace(request, model.RefNum);
+                PoslinkRequestBuilder.ApplyCreditTransactionType(request, model.TxnType);
+                PoslinkRequestBuilder.ApplyCreditAmounts(request, model.Amount, model.Surcharge, model.TxnType);
 
-            PoslinkRequestBuilder.ApplyTrace(req, a.RefNum);
-            PoslinkRequestBuilder.ApplyCreditTransactionType(req, a.TxnType);
-            PoslinkRequestBuilder.ApplyCreditAmounts(req, a.Amount, a.Surcharge, a.TxnType);
+                int returnCode = PoslinkReflection.InvokeTxMethod(
+                    transaction,
+                    "DoCredit",
+                    request,
+                    ref responseObj
+                );
 
-            Logger.Info("DoCreditHandler: invoking DoCredit");
-
-            int rc = PoslinkReflection.InvokeTxMethod(tx, "DoCredit", req, ref rsp);
-
-            Logger.Info("DoCreditHandler: done rc=" + rc);
-            return rc;
+                response = responseObj;
+                return returnCode;
+            }
+            catch (Exception ex)
+            {
+                // Optional: minimal logging
+                // Logger.Error($"DoCredit failed: {ex.Message}");
+                throw;
+            }
         }
     }
 }

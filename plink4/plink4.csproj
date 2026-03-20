@@ -72,10 +72,12 @@
     <Compile Include="DoCreditAdjustHandler.cs" />
     <Compile Include="DoCreditHandler.cs" />
     <Compile Include="DoDebitHandler.cs" />
+    <Compile Include="DoEbtBalanceHandler.cs" />
     <Compile Include="DoEbtHandler.cs" />
     <Compile Include="LastTransactionHandler.cs" />
     <Compile Include="LegacyResponseWriter.cs" />
     <Compile Include="Logger.cs" />
+    <Compile Include="ObjectDumper.cs" />
     <Compile Include="PoslinkReflection.cs" />
     <Compile Include="PoslinkRequestBuilder.cs" />
     <Compile Include="Program.cs" />
