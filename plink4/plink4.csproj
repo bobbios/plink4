@@ -74,6 +74,7 @@
     <Compile Include="DoDebitHandler.cs" />
     <Compile Include="DoEbtBalanceHandler.cs" />
     <Compile Include="DoEbtHandler.cs" />
+    <Compile Include="DoEbtReturnHandler.cs" />
     <Compile Include="LastTransactionHandler.cs" />
     <Compile Include="LegacyResponseWriter.cs" />
     <Compile Include="Logger.cs" />

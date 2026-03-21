@@ -25,6 +25,8 @@ namespace plink4
                     return DoCreditAdjustHandler.Run(model);
 
 
+
+
                 if (model.CardType == "EBT_FOOD" && model.TxnType == "BALANCE")
                 {
                     return DoEbtBalanceHandler.Run(model, "F");
@@ -42,6 +44,28 @@ namespace plink4
                 int returnCode;
 
                 string cardTypeUpper = (model.CardType ?? "").Trim().ToUpperInvariant();
+
+
+                // NEW: EBT RETURN HANDLER
+                if ((cardTypeUpper == "EBT_CASH" ||
+                     cardTypeUpper == "EBT_CASHBENEFIT" ||
+                     cardTypeUpper == "EBT_FOOD" ||
+                     cardTypeUpper == "EBT_FOODSTAMP") &&
+                    string.Equals(model.TxnType, "RETURN", StringComparison.OrdinalIgnoreCase))
+                {
+                    returnCode = DoEbtReturnHandler.Run(terminal, model, out response);
+
+                    // If handler already wrote response.txt (EBT_CASH RETURN block)
+                    if (response == null)
+                        return returnCode;
+
+                    LegacyResponseWriter.WriteDump(response);
+                    LegacyResponseWriter.WriteFromRsp(model.CardType, model.TxnType, returnCode == 0, response);
+
+                    return returnCode;
+                }
+
+
 
                 switch (cardTypeUpper)
                 {

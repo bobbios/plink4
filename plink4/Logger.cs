@@ -7,7 +7,7 @@ namespace plink4
     internal static class Logger
     {
 
-        public static bool DebugEnabled = false;
+        public static bool DebugEnabled = true;
 
 
 
