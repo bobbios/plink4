@@ -57,16 +57,11 @@ namespace plink4
                 if (response == null)
                     return returnCode;
 
-                LegacyResponseWriter.WriteDump(response);
-                LegacyResponseWriter.WriteFromRsp(model.CardType, model.TxnType, returnCode == 0, response);
-                return returnCode;
-            }
-
-            switch (cardTypeUpper)
-            {
-                case "CREDIT":
-                    returnCode = DoCreditHandler.Run(terminal, model, out response);
-                    break;
+                switch (cardTypeUpper)
+                {
+                    case "CREDIT":
+                        returnCode = DoCreditHandler.Run(terminal, model, out response);
+                        break;
 
                 case "DEBIT":
                     returnCode = DoDebitHandler.Run(terminal, model, out response);
