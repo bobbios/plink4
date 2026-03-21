@@ -1,122 +1,268 @@
-﻿using System;
+﻿using POSLinkSemiIntegration.Transaction;
+using System;
 using System.IO;
 using System.Reflection;
 
 namespace plink4
 {
+    /// <summary>
+    /// EBT balance inquiry.
+    ///
+    /// From the live terminal dump we can see the terminal object exposes:
+    ///   _transaction  = POSLinkSemiIntegration.Transaction.Transaction
+    ///   _communication = POSLinkCommon.Communication
+    ///
+    /// This handler uses _transaction.DoEbt() — the same call the old handler
+    /// attempted, but now we grab _transaction via the private field directly
+    /// instead of through a non-existent .Transaction property.
+    ///
+    /// DoProcess signature (from blob decode) is:
+    ///   ExecutionResult DoProcess(List&lt;byte[]&gt;, ref List&lt;byte[]&gt;)
+    /// — NOT DoProcess(string) — which is why that approach failed.
+    /// </summary>
     internal static class DoEbtBalanceHandler
     {
-        public static int Run(ArgsModel model, string ebtType)
+        public static int Run(ArgsModel model, string ebtType)  // you can even remove string ebtType param if always "F"
         {
+            Logger.Debug("Entered DoEbtBalanceHandler.Run ebtType=" + ebtType);
             try
             {
                 if (model == null)
                     throw new ArgumentNullException(nameof(model));
 
+                // 1. Get terminal
                 object terminal = CommandRouter.ConnectTerminal(model);
                 if (terminal == null)
                     throw new Exception("Terminal connection failed.");
+                Logger.Debug("Terminal type: " + terminal.GetType().FullName);
 
-                object txnObj = terminal.GetType()
-                    .GetProperty("Transaction", BindingFlags.Public | BindingFlags.Instance)?
-                    .GetValue(terminal, null);
+                // 2. Get _transaction
+                object txn = GetPrivateField(terminal, "_transaction");
+                if (txn == null)
+                    throw new Exception("_transaction field is null on " + terminal.GetType().FullName);
+                Logger.Debug("Transaction type: " + txn.GetType().FullName);
 
-                if (txnObj == null)
-                    throw new Exception("Terminal.Transaction is null.");
+                // 3. Resolve types
+                Type txnType = txn.GetType();
+                Assembly semiAsm = txnType.Assembly;
+                Type reqType = semiAsm.GetType("POSLinkSemiIntegration.Transaction.DoEbtRequest", true);
+                Type rspType = semiAsm.GetType("POSLinkSemiIntegration.Transaction.DoEbtResponse", true);
+                Logger.Debug("ReqType: " + reqType.FullName);
+                Logger.Debug("RspType: " + rspType.FullName);
 
-                Type reqType = Type.GetType(
-                    "POSLinkSemiIntegration.Transaction.DoEbtRequest, POSLinkSemiIntegration",
-                    throwOnError: true
-                );
+                // 4. Build the request
+                dynamic req = Activator.CreateInstance(reqType);
+                req.TransactionType = Enum.Parse(req.TransactionType.GetType(), "Inquiry", true);
 
-                Type rspType = Type.GetType(
-                    "POSLinkSemiIntegration.Transaction.DoEbtResponse, POSLinkSemiIntegration",
-                    throwOnError: true
-                );
+                if (req.AccountInformation == null)
+                {
+                    req.AccountInformation = Activator.CreateInstance(
+                        req.GetType().GetProperty("AccountInformation").PropertyType);
+                }
+                string ebtEnumName =
+                    string.Equals(ebtType, "C", StringComparison.OrdinalIgnoreCase)
+                        ? "CashBenefits"
+                        : "FoodStamp";
 
-                object req = Activator.CreateInstance(reqType);
+                req.AccountInformation.EbtType = Enum.Parse(
+                    req.AccountInformation.EbtType.GetType(), ebtEnumName, true);
 
-                SetIfExists(req, "TransType", "BALANCE_INQUIRY");
-                SetIfExists(req, "EbtType", ebtType);
+                // Optional: force CardType too (uncomment if still needed)
+                // req.AccountInformation.CardType = Enum.Parse(req.AccountInformation.CardType.GetType(), "EbtFoodStamp", true);
 
-                MethodInfo doEbtMethod = txnObj.GetType().GetMethod(
-                    "DoEbt",
-                    new[] { reqType, rspType.MakeByRefType() }
-                );
+                // TraceInformation – populate required trace fields safely
+                var traceObj = req.TraceInformation;
+                if (traceObj == null)
+                {
+                    var traceProp = req.GetType().GetProperty("TraceInformation", BindingFlags.Public | BindingFlags.Instance);
+                    if (traceProp != null && traceProp.CanWrite)
+                    {
+                        var traceType = traceProp.PropertyType;
+                        traceObj = Activator.CreateInstance(traceType);
+                        traceProp.SetValue(req, traceObj);
+                        Logger.Debug("Created TraceInformation instance");
+                    }
+                }
 
-                if (doEbtMethod == null)
-                    throw new Exception("DoEbt method not found.");
+                if (traceObj != null)
+                {
+                    string ecrRef = DateTime.Now.ToString("HHmmssfff");  // unique enough
 
-                object[] parms = new object[] { req, null };
-                int rc = (int)doEbtMethod.Invoke(txnObj, parms);
+                    // Try common trace property names – add more if needed based on future dumps
+                    var possibleTraceProps = new[]
+                    {
+                        "TraceNumber", "TraceNum", "TraceNo",
+                        "TerminalTraceNumber", "TerminalTrace",
+                        "ReferenceNumber", "RefNumber",
+                        "EcrReferenceNumber", "ECRRefNo",
+                        "InvoiceNumber", "InvoiceNo"
+                    };
 
-                object rsp = parms[1];
+                    bool setAny = false;
+                    foreach (var propName in possibleTraceProps)
+                    {
+                        var p = traceObj.GetType().GetProperty(propName, BindingFlags.Public | BindingFlags.Instance);
+                        if (p != null && p.CanWrite)
+                        {
+                            try
+                            {
+                                p.SetValue(traceObj, ecrRef);
+                                Logger.Debug($"Set TraceInformation.{propName} = {ecrRef}");
+                                setAny = true;
+                            }
+                            catch (Exception ex)
+                            {
+                                Logger.Debug($"Failed setting {propName}: {ex.Message}");
+                            }
+                        }
+                    }
 
-                WriteEbtBalanceResponse(rc, rsp, ebtType);
+                    if (!setAny)
+                    {
+                        Logger.Debug("WARNING: No recognizable trace/reference properties found on TraceRequest");
+                    }
+                }
+                else
+                {
+                    Logger.Debug("TraceInformation could not be created or accessed");
+                }
+
+                // 5. Call DoEbt
+                MethodInfo doEbt = txnType.GetMethod("DoEbt", new[] { reqType, rspType.MakeByRefType() });
+                if (doEbt == null)
+                    throw new Exception("DoEbt method not found on " + txnType.FullName);
+
+
+                // ---------------------------------------------------
+                // DEBUG: Dump the EBT request before sending
+                // ---------------------------------------------------
+                Logger.Debug("------ EBT REQUEST DUMP BEGIN ------");
+
+                DumpObjectProperties(req, "req.");
+
+                Logger.Debug("------ EBT REQUEST DUMP END ------");
+
+
+                Logger.Debug("Calling DoEbt...");
+                object[] args = { req, null };
+                doEbt.Invoke(txn, args);
+                dynamic rsp = args[1];
+                Logger.Debug("DoEbt returned. rsp=" + (rsp?.GetType().FullName ?? "null"));
+
+                DumpObject(rsp, "DoEbtResponse");
+                DumpObject(rsp.AmountInformation, "AmountInformation");
+                DumpObject(rsp.AccountInformation, "AccountInformation");
+                DumpObject(rsp.HostInformation, "HostInformation");
+
+                // 6. Evaluate & write
+                int rc = IsApproved(rsp) ? 0 : 1;
+                WriteResponse(rc, rsp, ebtType);
                 return rc;
             }
             catch (Exception ex)
             {
-                WriteEbtBalanceErrorResponse(ex, ebtType);
+                Logger.Debug("DoEbtBalanceHandler ERROR: " + ex.ToString());
+                WriteError(ex, ebtType);
                 return 1;
             }
         }
 
-        private static void WriteEbtBalanceResponse(int rc, object rsp, string ebtType)
+        private static void DumpObjectProperties(object obj, string prefix = "")
         {
-            string responseCode = GetString(rsp, "ResponseCode");
-            string responseMessage = GetString(rsp, "ResponseMessage");
+            if (obj == null)
+            {
+                Logger.Debug(prefix + " = null");
+                return;
+            }
 
-            bool ok = rc == 0 &&
-                      (string.IsNullOrWhiteSpace(responseCode) ||
-                       responseCode == "000000" ||
-                       responseCode == "0");
+            Type t = obj.GetType();
 
-            string resultCode = ok ? "0" : FirstNonEmpty(responseCode, rc.ToString());
-            string resultTxt = ok ? "OK" : FirstNonEmpty(responseMessage, "ERROR");
+            foreach (var p in t.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+            {
+                try
+                {
+                    object val = p.GetValue(obj, null);
 
-            string foodBalance = GetString(rsp, "FoodstampBalance");
-            string cashBalance = GetString(rsp, "CashBalance");
-            string remainingBalance = GetString(rsp, "RemainingBalance");
+                    if (val == null)
+                    {
+                        Logger.Debug($"{prefix}{p.Name} = null");
+                        continue;
+                    }
 
-            string timeStamp = FirstNonEmpty(
-                GetString(rsp, "LocalDateTime"),
-                GetString(rsp, "TimeStamp")
-            );
-
-            string tid = FirstNonEmpty(
-                GetString(rsp, "TerminalId"),
-                GetString(rsp, "Tid")
-            );
-
-            string mid = GetString(rsp, "Mid");
-
-            string selectedBalance = !string.IsNullOrWhiteSpace(remainingBalance)
-                ? remainingBalance
-                : (string.Equals(ebtType, "F", StringComparison.OrdinalIgnoreCase)
-                    ? foodBalance
-                    : cashBalance);
-
-            string text =
-                "ResultCode: " + resultCode + "\r\n" +
-                "ResultTxt: " + resultTxt + "\r\n" +
-                "ResponseCode: " + responseCode + "\r\n" +
-                "ResponseMessage: " + responseMessage + "\r\n" +
-                "FoodstampBalance: " + foodBalance + "\r\n" +
-                "CashBalance: " + cashBalance + "\r\n" +
-                "RemainingBalance: " + selectedBalance + "\r\n" +
-                "TimeStamp: " + timeStamp + "\r\n" +
-                "Tid: " + tid + "\r\n" +
-                "Mid: " + mid + "\r\n";
-
-            WriteResponseFile(text);
+                    // primitive / simple types
+                    if (p.PropertyType.IsPrimitive ||
+                        p.PropertyType == typeof(string) ||
+                        p.PropertyType == typeof(decimal))
+                    {
+                        Logger.Debug($"{prefix}{p.Name} = {val}");
+                    }
+                    else
+                    {
+                        Logger.Debug($"{prefix}{p.Name} -> {p.PropertyType.Name}");
+                        DumpObjectProperties(val, prefix + p.Name + ".");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Debug($"{prefix}{p.Name} ERROR: {ex.Message}");
+                }
+            }
         }
 
-        private static void WriteEbtBalanceErrorResponse(Exception ex, string ebtType)
+        // ---------------------------------------------------------------
+        // Response evaluation
+        // ---------------------------------------------------------------
+        private static bool IsApproved(object rsp)
+        {
+            if (rsp == null) return false;
+
+            // Try IsSuccessful bool
+            object isSucc = GetProp(rsp, "IsSuccessful");
+            if (isSucc is bool b) return b;
+
+            // Try response codes
+            string rc = Str(rsp, "ResponseCode");
+            string hrc = Str(rsp, "HostResponseCode");
+            return IsOk(rc) || IsOk(hrc);
+        }
+
+        private static bool IsOk(string code)
+            => !string.IsNullOrWhiteSpace(code)
+            && (code == "000000" || code == "00" || code == "0" || code == "000");
+
+        // ---------------------------------------------------------------
+        // Write response.txt
+        // ---------------------------------------------------------------
+        private static void WriteResponse(int rc, object rsp, string ebtType)
+        {
+            string responseCode = FirstOf(Str(rsp, "HostResponseCode"), Str(rsp, "ResponseCode"));
+            string responseMsg = FirstOf(Str(rsp, "HostDetailedMessage"),
+                                          Str(rsp, "HostResponseMessage"),
+                                          Str(rsp, "ResponseMessage"));
+
+            object amtInfo = GetProp(rsp, "AmountInformation");
+            string foodBal = Str(amtInfo, "Balance1");
+            string cashBal = Str(amtInfo, "Balance2");
+            string remaining = string.Equals(ebtType, "F", StringComparison.OrdinalIgnoreCase)
+                ? foodBal : cashBal;
+
+            string tid = FirstOf(Str(rsp, "TerminalId"), Str(rsp, "Tid"));
+
+            WriteFile(
+                "ResultCode: " + (rc == 0 ? "0" : "1") + "\r\n" +
+                "ResultTxt: " + (rc == 0 ? "OK" : "ERROR") + "\r\n" +
+                "ResponseCode: " + responseCode + "\r\n" +
+                "ResponseMessage: " + responseMsg + "\r\n" +
+                "FoodstampBalance: " + foodBal + "\r\n" +
+                "CashBalance: " + cashBal + "\r\n" +
+                "RemainingBalance: " + remaining + "\r\n" +
+                "Tid: " + tid + "\r\n");
+        }
+
+        private static void WriteError(Exception ex, string ebtType)
         {
             string msg = ex.InnerException?.Message ?? ex.Message;
-
-            string text =
+            WriteFile(
                 "ResultCode: 1\r\n" +
                 "ResultTxt: ERROR\r\n" +
                 "ResponseCode: 1\r\n" +
@@ -124,61 +270,134 @@ namespace plink4
                 "FoodstampBalance: \r\n" +
                 "CashBalance: \r\n" +
                 "RemainingBalance: \r\n" +
-                "EbtType: " + ebtType + "\r\n";
-
-            WriteResponseFile(text);
+                "EbtType: " + ebtType + "\r\n");
         }
 
-        private static void WriteResponseFile(string text)
+        private static void WriteFile(string text)
         {
-            var dir = Path.GetDirectoryName(AppConfig.OutResponse);
-            if (!string.IsNullOrEmpty(dir))
-                Directory.CreateDirectory(dir);
-
+            string dir = Path.GetDirectoryName(AppConfig.OutResponse);
+            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
             File.WriteAllText(AppConfig.OutResponse, text ?? "");
+        }
+
+        // ---------------------------------------------------------------
+        // Reflection helpers
+        // ---------------------------------------------------------------
+
+        /// <summary>Gets a private field value walking up the hierarchy.</summary>
+        private static object GetPrivateField(object obj, string fieldName)
+        {
+            for (Type t = obj.GetType(); t != null && t != typeof(object); t = t.BaseType)
+            {
+                FieldInfo f = t.GetField(fieldName,
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                if (f != null) return f.GetValue(obj);
+            }
+            return null;
+        }
+
+        /// <summary>Ensures a child object property exists and is instantiated.</summary>
+        private static object EnsureChild(object parent, string propName)
+        {
+            PropertyInfo p = parent.GetType().GetProperty(propName,
+                BindingFlags.Public | BindingFlags.Instance);
+            if (p == null || !p.CanRead || !p.CanWrite) return null;
+
+            object val = p.GetValue(parent);
+            if (val != null) return val;
+
+            Type childType = Nullable.GetUnderlyingType(p.PropertyType) ?? p.PropertyType;
+            val = Activator.CreateInstance(childType);
+            p.SetValue(parent, val);
+            return val;
+        }
+
+        /// <summary>Tries to set an enum property by value name; logs all valid values on failure.</summary>
+        private static void TrySetEnum(object obj, string propName, params string[] valueNames)
+        {
+            PropertyInfo p = obj.GetType().GetProperty(propName, BindingFlags.Public | BindingFlags.Instance);
+            if (p == null || !p.CanWrite) { Logger.Debug($"TrySetEnum: {propName} not found"); return; }
+            Type et = Nullable.GetUnderlyingType(p.PropertyType) ?? p.PropertyType;
+            if (!et.IsEnum)
+            {
+                Logger.Debug($"TrySetEnum: {propName} is not an enum ({et.Name})");
+                return;
+            }
+            foreach (string valueName in valueNames)
+            {
+                try
+                {
+                    object val = Enum.Parse(et, valueName, true);
+                    p.SetValue(obj, val);
+                    Logger.Debug($"TrySetEnum: {propName} = {valueName}");
+                    return;
+                }
+                catch { }
+            }
+            // Log all valid enum values to help diagnose
+            Logger.Debug($"TrySetEnum: {propName} failed all candidates. Valid values: "
+                + string.Join(", ", Enum.GetNames(et)));
+        }
+
+        /// <summary>Sets an enum property by name (case-insensitive).</summary>
+        private static void SetEnum(object obj, string propName, string valueName)
+        {
+            PropertyInfo p = obj.GetType().GetProperty(propName,
+                BindingFlags.Public | BindingFlags.Instance)
+                ?? throw new InvalidOperationException($"Property '{propName}' not found on {obj.GetType().Name}");
+            Type et = Nullable.GetUnderlyingType(p.PropertyType) ?? p.PropertyType;
+            if (!et.IsEnum)
+                throw new InvalidOperationException($"{propName} is not an enum (type={et.Name})");
+            p.SetValue(obj, Enum.Parse(et, valueName, true));
+            Logger.Debug($"Set {propName} = {valueName}");
+        }
+
+        /// <summary>Tries to set a string or convertible property; silent on failure.</summary>
+        private static void TrySet(object obj, string propName, object value)
+        {
+            try
+            {
+                PropertyInfo p = obj.GetType().GetProperty(propName,
+                    BindingFlags.Public | BindingFlags.Instance);
+                if (p == null || !p.CanWrite) return;
+                Type t = Nullable.GetUnderlyingType(p.PropertyType) ?? p.PropertyType;
+                object v = (value != null && !t.IsAssignableFrom(value.GetType()))
+                    ? Convert.ChangeType(value, t) : value;
+                p.SetValue(obj, v);
+            }
+            catch (Exception ex) { Logger.Debug($"TrySet {propName}: {ex.Message}"); }
         }
 
         private static object GetProp(object obj, string name)
         {
             if (obj == null) return null;
-
-            var p = obj.GetType().GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
-            return p?.GetValue(obj, null);
+            return obj.GetType()
+                .GetProperty(name, BindingFlags.Public | BindingFlags.Instance)
+                ?.GetValue(obj);
         }
 
-        private static string GetString(object obj, string name)
+        private static string Str(object obj, string name)
         {
-            var val = GetProp(obj, name);
-            return val == null ? "" : Convert.ToString(val);
+            object v = GetProp(obj, name);
+            return v == null ? "" : Convert.ToString(v);
         }
 
-        private static string FirstNonEmpty(params string[] values)
+        private static string FirstOf(params string[] vals)
         {
-            if (values == null) return "";
-
-            foreach (var v in values)
-            {
-                if (!string.IsNullOrWhiteSpace(v))
-                    return v;
-            }
-
+            foreach (string v in vals)
+                if (!string.IsNullOrWhiteSpace(v)) return v;
             return "";
         }
 
-        private static void SetIfExists(object obj, string propName, object value)
+        private static void DumpObject(object obj, string label)
         {
-            if (obj == null) return;
-
-            PropertyInfo p = obj.GetType().GetProperty(propName, BindingFlags.Public | BindingFlags.Instance);
-            if (p == null || !p.CanWrite) return;
-
-            object converted = value;
-            Type targetType = Nullable.GetUnderlyingType(p.PropertyType) ?? p.PropertyType;
-
-            if (value != null && !targetType.IsAssignableFrom(value.GetType()))
-                converted = Convert.ChangeType(value, targetType);
-
-            p.SetValue(obj, converted, null);
+            if (obj == null) { Logger.Debug(label + " = null"); return; }
+            Logger.Debug(label + " type=" + obj.GetType().FullName);
+            foreach (PropertyInfo p in obj.GetType().GetProperties())
+            {
+                try { Logger.Debug($"  {label}.{p.Name} = {p.GetValue(obj) ?? "(null)"}"); }
+                catch (Exception ex) { Logger.Debug($"  {label}.{p.Name} err={ex.Message}"); }
+            }
         }
     }
 }

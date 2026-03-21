@@ -1,4 +1,5 @@
-﻿using System;
+﻿using POSLinkSemiIntegration.Report;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -27,7 +28,7 @@ namespace plink4
 
                 Logger.Debug("Terminal connected");
 
-                var rows = GetHistoryTransactions(terminal, model, 10);
+                var rows = GetHistoryTransactions(terminal, model, 5);
 
                 Logger.Debug("HistoryTransactions count=" + rows.Count);
 
@@ -83,14 +84,16 @@ namespace plink4
         {
             var list = new List<LastTxnRow>();
 
-            object report = PoslinkReflection.RequireProperty(terminal, "Report", "Report property is null.");
+            object report = PoslinkReflection.RequireProperty(
+                terminal,
+                "Report",
+                "Report property is null."
+            );
 
             string[] edcTypes = { "Credit", "Debit", "Ebt" };
 
             foreach (var edc in edcTypes)
             {
-                Logger.Debug("GetHistoryTransactions total request edc=" + edc);
-
                 object reqTotal = PoslinkReflection.CreateRequest("LocalDetailReport");
                 object rspTotal = PoslinkReflection.CreateResponse("LocalDetailReport");
 
@@ -101,22 +104,16 @@ namespace plink4
 
                 int rcTotal = PoslinkReflection.InvokeTxMethod(report, "LocalDetailReport", reqTotal, ref rspTotal);
                 if (rcTotal != 0 || rspTotal == null)
-                {
-                    Logger.Debug("GetHistoryTransactions total request failed edc=" + edc + " rc=" + rcTotal);
                     continue;
-                }
 
-                string totalRaw = ReadString(rspTotal, "TotalRecord");
+                string totalRaw = ReadString(rspTotal, "TotalRecord", "TotalRecords", "RecordCount");
                 int total;
                 if (!int.TryParse(totalRaw, out total) || total <= 0)
-                {
-                    Logger.Debug("GetHistoryTransactions no history for edc=" + edc + " totalRaw=" + totalRaw);
                     continue;
-                }
 
-                Logger.Debug("GetHistoryTransactions edc=" + edc + " total=" + total);
+                int startRecord = Math.Max(0, total - takeCount);
 
-                for (int i = total - 1; i >= 0; i--)
+                for (int i = total - 1; i >= startRecord; i--)
                 {
                     object req = PoslinkReflection.CreateRequest("LocalDetailReport");
                     object rsp = PoslinkReflection.CreateResponse("LocalDetailReport");
@@ -131,6 +128,9 @@ namespace plink4
                     if (rc != 0 || rsp == null)
                         continue;
 
+                    DumpLocalDetailResponse(rsp, edc, i);
+
+
                     var row = BuildRowFromResponse(rsp, edc);
                     if (IsEmptyRow(row))
                         continue;
@@ -138,7 +138,6 @@ namespace plink4
                     if (row.RecordNumber == 0)
                         row.RecordNumber = i;
 
-                    // use actual history number for display
                     row.Index = row.RecordNumber;
 
                     list.Add(row);
@@ -157,9 +156,6 @@ namespace plink4
             return list;
         }
 
-
-
-
         private static LastTxnRow BuildRowFromResponse(object rsp, string fallbackEdc)
         {
             var amtInfo = PoslinkReflection.GetProperty(rsp, "AmountInformation");
@@ -170,24 +166,82 @@ namespace plink4
             var txnInfo = PoslinkReflection.GetProperty(rsp, "ReportTransactionInformation");
             var cardInfo = PoslinkReflection.GetProperty(rsp, "CardInformation");
 
+            string txnType = NormalizeTxnType(
+                ReadString(
+                    txnInfo,
+                    "TransactionType",
+                    "TransType",
+                    "TxnType",
+                    "Type"
+                )
+                ?? ReadString(
+                    traceInfo,
+                    "TransactionType",
+                    "TransType",
+                    "TxnType",
+                    "Type"
+                )
+                ?? ReadString(
+                    rsp,
+                    "TransactionType",
+                    "TransType",
+                    "TxnType",
+                    "Type"
+                )
+            );
+
             var row = new LastTxnRow
             {
-                Type = ReadString(rsp, "EdcType", "TransactionType") ?? fallbackEdc,
+                EdcType = fallbackEdc,
+                Type = NormalizeTxnType(
+    ReadString(
+        rsp,
+        "TransactionType"
+    )
+),
                 Amount = ReadAmountInCents(amtInfo, "ApprovedAmount", "Amount", "TransactionAmount", "TotalAmount", "BaseAmount"),
                 Last4 = ReadLast4(acctInfo) ?? ReadLast4(cardInfo) ?? ReadLast4(rsp),
                 RecordNumber = ReadInt(rsp, "RecordNumber"),
-                TransactionNumber = ReadString(traceInfo, "TransactionNumber", "ReferenceNumber", "TraceNumber", "InvoiceNumber", "TransactionId", "EcrReferenceNumber", "HostReferenceNumber")
+                TransactionNumber =
+                    ReadString(traceInfo, "TransactionNumber", "ReferenceNumber", "TraceNumber", "InvoiceNumber", "TransactionId", "EcrReferenceNumber", "HostReferenceNumber")
                     ?? ReadString(hostTrace, "HostReferenceNumber", "ReferenceNumber", "TransactionNumber", "TraceNumber")
                     ?? ReadString(txnInfo, "TransactionNumber", "ReferenceNumber", "InvoiceNumber")
                     ?? ReadString(rsp, "ReferenceNumber", "TransactionNumber"),
-                AuthNumber = ReadString(hostInfo, "AuthorizationCode", "AuthCode", "ApprovalNumber", "AuthNumber")
+                AuthNumber =
+                    ReadString(hostInfo, "AuthorizationCode", "AuthCode", "ApprovalNumber", "AuthNumber")
                     ?? ReadString(traceInfo, "AuthorizationCode", "AuthCode", "ApprovalNumber", "AuthNumber")
             };
+
+            if (string.IsNullOrWhiteSpace(row.Type))
+                row.Type = fallbackEdc;
 
             if (row.Amount == 0m)
                 row.Amount = ReadAmountInCents(rsp, "Amount", "ApprovedAmount", "TransactionAmount", "TotalAmount", "BaseAmount");
 
             return row;
+        }
+
+        private static string NormalizeTxnType(string raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+                return "";
+
+            string s = raw.Trim();
+
+            if (s.Equals("Sale", StringComparison.OrdinalIgnoreCase)) return "SALE";
+            if (s.Equals("Return", StringComparison.OrdinalIgnoreCase)) return "RETURN";
+            if (s.Equals("Refund", StringComparison.OrdinalIgnoreCase)) return "RETURN";
+            if (s.Equals("Void", StringComparison.OrdinalIgnoreCase)) return "VOID";
+            if (s.Equals("Adjust", StringComparison.OrdinalIgnoreCase)) return "ADJUST";
+            if (s.Equals("Adjustment", StringComparison.OrdinalIgnoreCase)) return "ADJUST";
+            if (s.Equals("PreAuth", StringComparison.OrdinalIgnoreCase)) return "PREAUTH";
+            if (s.Equals("Pre-Auth", StringComparison.OrdinalIgnoreCase)) return "PREAUTH";
+            if (s.Equals("PostAuth", StringComparison.OrdinalIgnoreCase)) return "POSTAUTH";
+            if (s.Equals("Post-Auth", StringComparison.OrdinalIgnoreCase)) return "POSTAUTH";
+            if (s.Equals("OfflineSale", StringComparison.OrdinalIgnoreCase)) return "OFFLINE SALE";
+            if (s.Equals("Force", StringComparison.OrdinalIgnoreCase)) return "FORCE";
+
+            return s.ToUpperInvariant();
         }
 
         private static bool IsEmptyRow(LastTxnRow row)
@@ -217,38 +271,42 @@ namespace plink4
 
             if (rows == null || rows.Count == 0)
             {
-                sb.AppendLine("# | card | amount | auth");
+                sb.AppendLine("# | type | card | amount | auth");
                 sb.AppendLine("No transactions found.");
                 File.WriteAllText(outputPath, sb.ToString());
                 return;
             }
 
             int col1 = "#".Length;
-            int col2 = "card".Length;
-            int col3 = "amount".Length;
-            int col4 = "auth".Length;
+            int col2 = "type".Length;
+            int col3 = "card".Length;
+            int col4 = "amount".Length;
+            int col5 = "auth".Length;
 
             foreach (var r in rows)
             {
                 col1 = Math.Max(col1, r.Index.ToString().Length);
-                col2 = Math.Max(col2, Safe(r.Last4).Length);
-                col3 = Math.Max(col3, r.Amount.ToString("0.00").Length);
-                col4 = Math.Max(col4, Safe(r.AuthNumber).Length);
+                col2 = Math.Max(col2, Safe(r.Type).Length);
+                col3 = Math.Max(col3, Safe(r.Last4).Length);
+                col4 = Math.Max(col4, r.Amount.ToString("0.00").Length);
+                col5 = Math.Max(col5, Safe(r.AuthNumber).Length);
             }
 
             sb.AppendLine(
                 PadRight("#", col1) + " | " +
-                PadRight("card", col2) + " | " +
-                PadLeft("amount", col3) + " | " +
-                PadRight("auth", col4));
+                PadRight("type", col2) + " | " +
+                PadRight("card", col3) + " | " +
+                PadLeft("amount", col4) + " | " +
+                PadRight("auth", col5));
 
             foreach (var r in rows)
             {
                 sb.AppendLine(
-                PadRight(r.Index.ToString(), col1) + " | " +
-                    PadRight(Safe(r.Last4), col2) + " | " +
-                    PadLeft(r.Amount.ToString("0.00"), col3) + " | " +
-                    PadRight(Safe(r.AuthNumber), col4));
+                    PadRight(r.Index.ToString(), col1) + " | " +
+                    PadRight(Safe(r.Type), col2) + " | " +
+                    PadRight(Safe(r.Last4), col3) + " | " +
+                    PadLeft(r.Amount.ToString("0.00"), col4) + " | " +
+                    PadRight(Safe(r.AuthNumber), col5));
             }
 
             File.WriteAllText(outputPath, sb.ToString());
@@ -357,26 +415,9 @@ namespace plink4
                 else
                     pi.SetValue(obj, Convert.ChangeType(value, targetType));
             }
-            catch { /* silent */ }
+            catch { }
         }
 
-        private static void SetIntIfExists(object obj, string propName, int value)
-        {
-            var pi = obj?.GetType().GetProperty(propName, BindingFlags.Public | BindingFlags.Instance);
-            if (pi == null || !pi.CanWrite) return;
-
-            try
-            {
-                var targetType = Nullable.GetUnderlyingType(pi.PropertyType) ?? pi.PropertyType;
-                if (targetType == typeof(int))
-                    pi.SetValue(obj, value);
-                else if (targetType == typeof(string))
-                    pi.SetValue(obj, value.ToString());
-                else
-                    pi.SetValue(obj, Convert.ChangeType(value, targetType));
-            }
-            catch { /* silent */ }
-        }
 
         private static void SetEnumIfExists(object obj, string propName, string enumValue)
         {
@@ -391,7 +432,93 @@ namespace plink4
                 var enumVal = Enum.Parse(targetType, enumValue, true);
                 pi.SetValue(obj, enumVal);
             }
-            catch { /* silent */ }
+            catch { }
+        }
+
+        private static void DumpLocalDetailResponse(object rsp, string edc, int recordNumber)
+        {
+            try
+            {
+                Logger.Debug("==================================================");
+                Logger.Debug("LocalDetailReport Dump");
+                Logger.Debug("Time: " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+                Logger.Debug("EDC: " + edc);
+                Logger.Debug("Requested RecordNumber: " + recordNumber);
+                Logger.Debug("Response Type: " + (rsp == null ? "(null)" : rsp.GetType().FullName));
+                Logger.Debug("==================================================");
+
+                DumpObjectProperties(rsp, "rsp", 0);
+            }
+            catch (Exception ex)
+            {
+                Logger.Debug("DumpLocalDetailResponse error: " + ex.Message);
+            }
+        }
+
+        private static void DumpObjectProperties(object obj, string name, int level)
+        {
+            string indent = new string(' ', level * 2);
+
+            if (obj == null)
+            {
+                Logger.Debug(indent + name + " = <null>");
+                return;
+            }
+
+            Type t = obj.GetType();
+
+            if (level > 4)
+            {
+                Logger.Debug(indent + name + " = <max depth> [" + t.FullName + "]");
+                return;
+            }
+
+            Logger.Debug(indent + name + " [" + t.FullName + "]");
+
+            PropertyInfo[] props;
+
+            try
+            {
+                props = t.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+            }
+            catch
+            {
+                return;
+            }
+
+            foreach (var p in props)
+            {
+                object val = null;
+
+                try
+                {
+                    if (p.GetIndexParameters().Length == 0)
+                        val = p.GetValue(obj, null);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Debug(indent + "  " + p.Name + " = <error: " + ex.Message + ">");
+                    continue;
+                }
+
+                if (val == null)
+                {
+                    Logger.Debug(indent + "  " + p.Name + " = <null>");
+                    continue;
+                }
+
+                Type vt = val.GetType();
+
+                if (vt.IsPrimitive || vt.IsEnum || vt == typeof(string) || vt == typeof(decimal) || vt == typeof(DateTime))
+                {
+                    Logger.Debug(indent + "  " + p.Name + " = " + Convert.ToString(val));
+                }
+                else
+                {
+                    Logger.Debug(indent + "  " + p.Name + " =>");
+                    DumpObjectProperties(val, p.Name, level + 1);
+                }
+            }
         }
 
         private static bool TrySetEnumCandidates(object obj, string propName, params string[] candidates)
@@ -420,10 +547,14 @@ namespace plink4
         private static string PadLeft(string value, int width) => (value ?? "").PadLeft(width);
     }
 
+
+
+
     internal sealed class LastTxnRow
     {
         public int Index { get; set; }
         public int RecordNumber { get; set; }
+        public string EdcType { get; set; }
         public string Type { get; set; }
         public string TransactionNumber { get; set; }
         public string Last4 { get; set; }
