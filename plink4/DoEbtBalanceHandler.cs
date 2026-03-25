@@ -241,10 +241,10 @@ namespace plink4
                                           Str(rsp, "ResponseMessage"));
 
             object amtInfo = GetProp(rsp, "AmountInformation");
-            string foodBal = Str(amtInfo, "Balance1");
-            string cashBal = Str(amtInfo, "Balance2");
-            string remaining = string.Equals(ebtType, "F", StringComparison.OrdinalIgnoreCase)
-                ? foodBal : cashBal;
+            //string foodBal = Str(amtInfo, "Balance1");
+            decimal cashBal = decimal.Parse(Str(amtInfo, "Balance2")) * 0.01m;
+            //string remaining = string.Equals(ebtType, "F", StringComparison.OrdinalIgnoreCase)
+            //? foodBal : cashBal;
 
             string tid = FirstOf(Str(rsp, "TerminalId"), Str(rsp, "Tid"));
 
@@ -253,9 +253,9 @@ namespace plink4
                 "ResultTxt: " + (rc == 0 ? "OK" : "ERROR") + "\r\n" +
                 "ResponseCode: " + responseCode + "\r\n" +
                 "ResponseMessage: " + responseMsg + "\r\n" +
-                "FoodstampBalance: " + foodBal + "\r\n" +
-                "CashBalance: " + cashBal + "\r\n" +
-                "RemainingBalance: " + remaining + "\r\n" +
+                //"FoodstampBalance: " + foodBal + "\r\n" +
+                "Balance: " + cashBal + "\r\n" +
+                //"RemainingBalance: " + remaining + "\r\n" +
                 "Tid: " + tid + "\r\n");
         }
 
@@ -275,9 +275,9 @@ namespace plink4
 
         private static void WriteFile(string text)
         {
-            string dir = Path.GetDirectoryName(AppConfig.OutResponse);
+            string dir = Path.GetDirectoryName(AppConfig.BalanceResponse);
             if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-            File.WriteAllText(AppConfig.OutResponse, text ?? "");
+            File.WriteAllText(AppConfig.BalanceResponse, text ?? "");
         }
 
         // ---------------------------------------------------------------

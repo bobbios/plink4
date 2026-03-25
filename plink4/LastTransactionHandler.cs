@@ -258,7 +258,7 @@ namespace plink4
             var outputPath = AppConfig.Last10Transactions;
 
             if (string.IsNullOrWhiteSpace(outputPath))
-                throw new Exception("AppConfig.Last10Transactions is blank.");
+                throw new Exception("AppConfig.last10Transactions is blank.");
 
             var dir = Path.GetDirectoryName(outputPath);
             if (!string.IsNullOrWhiteSpace(dir) && !Directory.Exists(dir))
@@ -317,7 +317,7 @@ namespace plink4
             var outputPath = AppConfig.Last10Transactions;
 
             if (string.IsNullOrWhiteSpace(outputPath))
-                outputPath = @"C:\plink\responses\last10transactions.txt";
+                outputPath = @"C:\plink\responses\Last10Transactions.txt";
 
             var dir = Path.GetDirectoryName(outputPath);
             if (!string.IsNullOrWhiteSpace(dir) && !Directory.Exists(dir))
