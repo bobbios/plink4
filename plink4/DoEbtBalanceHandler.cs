@@ -47,8 +47,8 @@ namespace plink4
                 Assembly semiAsm = txnType.Assembly;
                 Type reqType = semiAsm.GetType("POSLinkSemiIntegration.Transaction.DoEbtRequest", true);
                 Type rspType = semiAsm.GetType("POSLinkSemiIntegration.Transaction.DoEbtResponse", true);
-                Logger.Debug("ReqType: " + reqType.FullName);
-                Logger.Debug("RspType: " + rspType.FullName);
+          //      Logger.Debug("ReqType: " + reqType.FullName);
+           //     Logger.Debug("RspType: " + rspType.FullName);
 
                 // 4. Build the request
                 dynamic req = Activator.CreateInstance(reqType);
@@ -136,23 +136,23 @@ namespace plink4
                 // ---------------------------------------------------
                 // DEBUG: Dump the EBT request before sending
                 // ---------------------------------------------------
-                Logger.Debug("------ EBT REQUEST DUMP BEGIN ------");
+        //        Logger.Debug("------ EBT REQUEST DUMP BEGIN ------");
 
-                DumpObjectProperties(req, "req.");
+          //      DumpObjectProperties(req, "req.");
 
-                Logger.Debug("------ EBT REQUEST DUMP END ------");
+         //       Logger.Debug("------ EBT REQUEST DUMP END ------");
 
 
                 Logger.Debug("Calling DoEbt...");
                 object[] args = { req, null };
                 doEbt.Invoke(txn, args);
                 dynamic rsp = args[1];
-                Logger.Debug("DoEbt returned. rsp=" + (rsp?.GetType().FullName ?? "null"));
+         //       Logger.Debug("DoEbt returned. rsp=" + (rsp?.GetType().FullName ?? "null"));
 
-                DumpObject(rsp, "DoEbtResponse");
+           //     DumpObject(rsp, "DoEbtResponse");
                 DumpObject(rsp.AmountInformation, "AmountInformation");
-                DumpObject(rsp.AccountInformation, "AccountInformation");
-                DumpObject(rsp.HostInformation, "HostInformation");
+          //      DumpObject(rsp.AccountInformation, "AccountInformation");
+          //      DumpObject(rsp.HostInformation, "HostInformation");
 
                 // 6. Evaluate & write
                 int rc = IsApproved(rsp) ? 0 : 1;
@@ -241,10 +241,11 @@ namespace plink4
                                           Str(rsp, "ResponseMessage"));
 
             object amtInfo = GetProp(rsp, "AmountInformation");
-            //string foodBal = Str(amtInfo, "Balance1");
-            decimal cashBal = decimal.Parse(Str(amtInfo, "Balance2")) * 0.01m;
-            //string remaining = string.Equals(ebtType, "F", StringComparison.OrdinalIgnoreCase)
-            //? foodBal : cashBal;
+            string Balance1 = Str(amtInfo, "Balance1");
+            decimal Balance2 = decimal.Parse(Str(amtInfo, "Balance2")) * 0.01m;
+            string remaining = string.Equals(ebtType, "F", StringComparison.OrdinalIgnoreCase)
+               ? Balance1
+               : Balance2.ToString();
 
             string tid = FirstOf(Str(rsp, "TerminalId"), Str(rsp, "Tid"));
 
@@ -253,9 +254,9 @@ namespace plink4
                 "ResultTxt: " + (rc == 0 ? "OK" : "ERROR") + "\r\n" +
                 "ResponseCode: " + responseCode + "\r\n" +
                 "ResponseMessage: " + responseMsg + "\r\n" +
-                //"FoodstampBalance: " + foodBal + "\r\n" +
-                "Balance: " + cashBal + "\r\n" +
-                //"RemainingBalance: " + remaining + "\r\n" +
+                "Balance1: " + Balance1 + "\r\n" +
+                "Balance2: " + Balance2 + "\r\n" +
+                "Balance: " + remaining + "\r\n" +
                 "Tid: " + tid + "\r\n");
         }
 
