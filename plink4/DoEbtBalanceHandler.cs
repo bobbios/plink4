@@ -241,10 +241,10 @@ namespace plink4
                                           Str(rsp, "ResponseMessage"));
 
             object amtInfo = GetProp(rsp, "AmountInformation");
-            string Balance1 = Str(amtInfo, "Balance1");
+            decimal Balance1 = decimal.Parse(Str(amtInfo, "Balance1")) * 0.01m;
             decimal Balance2 = decimal.Parse(Str(amtInfo, "Balance2")) * 0.01m;
             string remaining = string.Equals(ebtType, "F", StringComparison.OrdinalIgnoreCase)
-               ? Balance1
+               ? Balance1.ToString()
                : Balance2.ToString();
 
             string tid = FirstOf(Str(rsp, "TerminalId"), Str(rsp, "Tid"));
