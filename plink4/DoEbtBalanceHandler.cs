@@ -241,11 +241,11 @@ namespace plink4
                                           Str(rsp, "ResponseMessage"));
 
             object amtInfo = GetProp(rsp, "AmountInformation");
-            decimal Balance1 = decimal.Parse(Str(amtInfo, "Balance1")) * 0.01m;
-            decimal Balance2 = decimal.Parse(Str(amtInfo, "Balance2")) * 0.01m;
+            decimal cashBalance = decimal.Parse(Str(amtInfo, "Balance1")) * 0.01m;
+            decimal foodBalance = decimal.Parse(Str(amtInfo, "Balance2")) * 0.01m;
             string remaining = string.Equals(ebtType, "F", StringComparison.OrdinalIgnoreCase)
-               ? Balance1.ToString()
-               : Balance2.ToString();
+               ? cashBalance.ToString()
+               : foodBalance.ToString();
 
             string tid = FirstOf(Str(rsp, "TerminalId"), Str(rsp, "Tid"));
 
@@ -254,10 +254,9 @@ namespace plink4
                 "ResultTxt: " + (rc == 0 ? "OK" : "ERROR") + "\r\n" +
                 "ResponseCode: " + responseCode + "\r\n" +
                 "ResponseMessage: " + responseMsg + "\r\n" +
-                "Balance1: " + Balance1 + "\r\n" +
-                "Balance2: " + Balance2 + "\r\n" +
-                "Balance: " + remaining + "\r\n" +
-                "Tid: " + tid + "\r\n");
+                "cashBalance: " + cashBalance + "\r\n" +
+                "foodBalance: " + foodBalance + "\r\n");
+   
         }
 
         private static void WriteError(Exception ex, string ebtType)
