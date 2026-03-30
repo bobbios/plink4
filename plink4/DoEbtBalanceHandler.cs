@@ -254,8 +254,8 @@ namespace plink4
                 "ResultTxt: " + (rc == 0 ? "OK" : "ERROR") + "\r\n" +
                 "ResponseCode: " + responseCode + "\r\n" +
                 "ResponseMessage: " + responseMsg + "\r\n" +
-                "cashBalance: " + cashBalance + "\r\n" +
-                "foodBalance: " + foodBalance + "\r\n");
+                "Balance1: " + cashBalance + "\r\n" +
+                "Balance2: " + foodBalance + "\r\n");
    
         }
 
