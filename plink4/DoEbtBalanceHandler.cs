@@ -24,7 +24,7 @@ namespace plink4
     {
         public static int Run(ArgsModel model, string ebtType)  // you can even remove string ebtType param if always "F"
         {
-            Logger.Debug("Entered DoEbtBalanceHandler.Run ebtType=" + ebtType);
+            Logger.Info("Entered DoEbtBalanceHandler.Run ebtType=" + ebtType);
             try
             {
                 if (model == null)
@@ -34,21 +34,21 @@ namespace plink4
                 object terminal = CommandRouter.ConnectTerminal(model);
                 if (terminal == null)
                     throw new Exception("Terminal connection failed.");
-                Logger.Debug("Terminal type: " + terminal.GetType().FullName);
+                Logger.Info("Terminal type: " + terminal.GetType().FullName);
 
                 // 2. Get _transaction
                 object txn = GetPrivateField(terminal, "_transaction");
                 if (txn == null)
                     throw new Exception("_transaction field is null on " + terminal.GetType().FullName);
-                Logger.Debug("Transaction type: " + txn.GetType().FullName);
+                Logger.Info("Transaction type: " + txn.GetType().FullName);
 
                 // 3. Resolve types
                 Type txnType = txn.GetType();
                 Assembly semiAsm = txnType.Assembly;
                 Type reqType = semiAsm.GetType("POSLinkSemiIntegration.Transaction.DoEbtRequest", true);
                 Type rspType = semiAsm.GetType("POSLinkSemiIntegration.Transaction.DoEbtResponse", true);
-          //      Logger.Debug("ReqType: " + reqType.FullName);
-           //     Logger.Debug("RspType: " + rspType.FullName);
+                //      Logger.Debug("ReqType: " + reqType.FullName);
+                //     Logger.Debug("RspType: " + rspType.FullName);
 
                 // 4. Build the request
                 dynamic req = Activator.CreateInstance(reqType);
@@ -80,7 +80,7 @@ namespace plink4
                         var traceType = traceProp.PropertyType;
                         traceObj = Activator.CreateInstance(traceType);
                         traceProp.SetValue(req, traceObj);
-                        Logger.Debug("Created TraceInformation instance");
+                        Logger.Info("Created TraceInformation instance");
                     }
                 }
 
@@ -107,24 +107,24 @@ namespace plink4
                             try
                             {
                                 p.SetValue(traceObj, ecrRef);
-                                Logger.Debug($"Set TraceInformation.{propName} = {ecrRef}");
+                                Logger.Info($"Set TraceInformation.{propName} = {ecrRef}");
                                 setAny = true;
                             }
                             catch (Exception ex)
                             {
-                                Logger.Debug($"Failed setting {propName}: {ex.Message}");
+                                Logger.Info($"Failed setting {propName}: {ex.Message}");
                             }
                         }
                     }
 
                     if (!setAny)
                     {
-                        Logger.Debug("WARNING: No recognizable trace/reference properties found on TraceRequest");
+                        Logger.Info("WARNING: No recognizable trace/reference properties found on TraceRequest");
                     }
                 }
                 else
                 {
-                    Logger.Debug("TraceInformation could not be created or accessed");
+                    Logger.Info("TraceInformation could not be created or accessed");
                 }
 
                 // 5. Call DoEbt
@@ -136,23 +136,23 @@ namespace plink4
                 // ---------------------------------------------------
                 // DEBUG: Dump the EBT request before sending
                 // ---------------------------------------------------
-        //        Logger.Debug("------ EBT REQUEST DUMP BEGIN ------");
+                //        Logger.Debug("------ EBT REQUEST DUMP BEGIN ------");
 
-          //      DumpObjectProperties(req, "req.");
+                //      DumpObjectProperties(req, "req.");
 
-         //       Logger.Debug("------ EBT REQUEST DUMP END ------");
+                //       Logger.Debug("------ EBT REQUEST DUMP END ------");
 
 
                 Logger.Debug("Calling DoEbt...");
                 object[] args = { req, null };
                 doEbt.Invoke(txn, args);
                 dynamic rsp = args[1];
-         //       Logger.Debug("DoEbt returned. rsp=" + (rsp?.GetType().FullName ?? "null"));
+                //       Logger.Debug("DoEbt returned. rsp=" + (rsp?.GetType().FullName ?? "null"));
 
-           //     DumpObject(rsp, "DoEbtResponse");
+                //     DumpObject(rsp, "DoEbtResponse");
                 DumpObject(rsp.AmountInformation, "AmountInformation");
-          //      DumpObject(rsp.AccountInformation, "AccountInformation");
-          //      DumpObject(rsp.HostInformation, "HostInformation");
+                //      DumpObject(rsp.AccountInformation, "AccountInformation");
+                //      DumpObject(rsp.HostInformation, "HostInformation");
 
                 // 6. Evaluate & write
                 int rc = IsApproved(rsp) ? 0 : 1;
@@ -241,11 +241,11 @@ namespace plink4
                                           Str(rsp, "ResponseMessage"));
 
             object amtInfo = GetProp(rsp, "AmountInformation");
-            decimal cashBalance = decimal.Parse(Str(amtInfo, "Balance1")) * 0.01m;
-            decimal foodBalance = decimal.Parse(Str(amtInfo, "Balance2")) * 0.01m;
+            decimal Balance1 = decimal.Parse(Str(amtInfo, "Balance1")) * 0.01m;
+            decimal Balance2 = decimal.Parse(Str(amtInfo, "Balance2")) * 0.01m;
             string remaining = string.Equals(ebtType, "F", StringComparison.OrdinalIgnoreCase)
-               ? cashBalance.ToString()
-               : foodBalance.ToString();
+               ? Balance1.ToString()
+               : Balance2.ToString();
 
             string tid = FirstOf(Str(rsp, "TerminalId"), Str(rsp, "Tid"));
 
@@ -254,9 +254,9 @@ namespace plink4
                 "ResultTxt: " + (rc == 0 ? "OK" : "ERROR") + "\r\n" +
                 "ResponseCode: " + responseCode + "\r\n" +
                 "ResponseMessage: " + responseMsg + "\r\n" +
-                "Balance1: " + cashBalance + "\r\n" +
-                "Balance2: " + foodBalance + "\r\n");
-   
+                "Balance1: " + Balance1 + "\r\n" +
+                "Balance2: " + Balance2 + "\r\n");
+
         }
 
         private static void WriteError(Exception ex, string ebtType)

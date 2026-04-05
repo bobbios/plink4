@@ -9,10 +9,10 @@ namespace plink4
 
         public const string LogPath = @"C:\newretail\card\plink4.txt";
         public const string OutResponse = @"C:\newretail\card\response.txt";
-        public const string BalanceResponse = @"C:\newretail\card\ebt_balance.txt";
         public const string OutResponse2 = @"C:\newretail\card\response2.txt";
         public const string BatchResponse = @"C:\newretail\card\batchresponse.txt";
-        public const string LastTransactionResponse = @"C:\newretail\card\last10Transactions.txt";
+        public const string LastTransactionResponse = @"C:\newretail\card\lasttransactionresponse.txt";
         public const string Last10Transactions = @"C:\newretail\card\last10Transactions.txt";
+        public const string BalanceResponse = @"C:\newretail\card\ebt_balance.txt";
     }
 }

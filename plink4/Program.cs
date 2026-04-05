@@ -7,31 +7,22 @@ namespace plink4
     {
         static int Main(string[] args)
         {
-            Logger.Debug("Program.Main start");
-
-            // Log startup banner
+            // Log startup banner + all raw arguments in one line
             Logger.LogStartup(args);
-
-            Logger.Debug("After LogStartup");
 
             // Optional: show all arguments in a single compact line
             if (args.Length > 0)
             {
                 string argsLine = string.Join(" ", args.Select(a => $"'{a}'"));
-                Logger.Debug("Raw args: " + argsLine);
             }
             else
             {
                 Logger.Info("No command-line arguments provided.");
             }
 
-            Logger.Debug("Before ArgsParser.Parse");
-
             var model = ArgsParser.Parse(args);
 
-            Logger.Debug("After ArgsParser.Parse");
-
-            // One-line summary of parsed values
+            // One-line summary of parsed values (most useful single line for quick review)
             Logger.Info(
                 $"Parsed: ref={model.RefNum ?? "-"} amt={model.Amount ?? "-"} " +
                 $"card={model.CardType ?? "-"} type={model.TxnType ?? "-"} " +
@@ -39,13 +30,7 @@ namespace plink4
                 $"approval={model.ApprovalCode ?? "-"} transId={model.TransactionId ?? "-"}"
             );
 
-            Logger.Debug("Before CommandRouter.Execute");
-
-            int rc = CommandRouter.Execute(model);
-
-            Logger.Debug("After CommandRouter.Execute rc=" + rc);
-
-            return rc;
+            return CommandRouter.Execute(model);
         }
     }
 }

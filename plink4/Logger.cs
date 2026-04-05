@@ -6,11 +6,6 @@ namespace plink4
 {
     internal static class Logger
     {
-
-        public static bool DebugEnabled = true;
-
-
-
         // Fixed subfolder for **only** the daily program logs
         private const string LogFolderName = "log";
 
@@ -18,19 +13,6 @@ namespace plink4
         private static readonly string LogDirectory = Path.Combine(
             @"c:\newretail\card",
             LogFolderName);
-
-
-        public static void Debug(string msg,
-    [CallerMemberName] string member = "",
-    [CallerFilePath] string file = "",
-    [CallerLineNumber] int line = 0)
-        {
-            if (!DebugEnabled)
-                return;
-
-            Write("DEBUG", msg, member, file, line);
-        }
-
 
         public static void EnsureFolders()
         {
@@ -58,7 +40,13 @@ namespace plink4
         {
             Write("INFO", msg, member, file, line);
         }
-
+        public static void Debug(string msg,
+    [CallerMemberName] string member = "",
+    [CallerFilePath] string file = "",
+    [CallerLineNumber] int line = 0)
+        {
+            Write("INFO", msg, member, file, line);
+        }
         public static void Error(string msg,
             [CallerMemberName] string member = "",
             [CallerFilePath] string file = "",

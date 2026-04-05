@@ -4,7 +4,7 @@
     {
         public string RefNum { get; set; }        // 123456
         public string Amount { get; set; }        // 125
-        public string CardType { get; set; }      // CREDIT debit EBT_FOOD, EBT_CASH
+        public string CardType { get; set; }      // CREDIT
         public string TxnType { get; set; }       // ADJUST
 
         public string Command { get; set; }       // optional custom command from args[2]
