@@ -236,27 +236,34 @@ namespace plink4
         private static void WriteResponse(int rc, object rsp, string ebtType)
         {
             string responseCode = FirstOf(Str(rsp, "HostResponseCode"), Str(rsp, "ResponseCode"));
-            string responseMsg = FirstOf(Str(rsp, "HostDetailedMessage"),
-                                          Str(rsp, "HostResponseMessage"),
-                                          Str(rsp, "ResponseMessage"));
+            string responseMsg = FirstOf(
+                Str(rsp, "HostDetailedMessage"),
+                Str(rsp, "HostResponseMessage"),
+                Str(rsp, "ResponseMessage")
+            );
 
             object amtInfo = GetProp(rsp, "AmountInformation");
-            decimal Balance1 = decimal.Parse(Str(amtInfo, "Balance1")) * 0.01m;
-            decimal Balance2 = decimal.Parse(Str(amtInfo, "Balance2")) * 0.01m;
-            string remaining = string.Equals(ebtType, "F", StringComparison.OrdinalIgnoreCase)
-               ? Balance1.ToString()
-               : Balance2.ToString();
 
-            string tid = FirstOf(Str(rsp, "TerminalId"), Str(rsp, "Tid"));
+            decimal Balance1 = 0m;
+            decimal Balance2 = 0m;
+
+            decimal.TryParse(Str(amtInfo, "Balance1"), out Balance1);
+            decimal.TryParse(Str(amtInfo, "Balance2"), out Balance2);
+
+            Balance1 *= 0.01m;
+            Balance2 *= 0.01m;
+
+            string now = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
 
             WriteFile(
+                "DateTime: " + now + "\r\n" +
                 "ResultCode: " + (rc == 0 ? "0" : "1") + "\r\n" +
                 "ResultTxt: " + (rc == 0 ? "OK" : "ERROR") + "\r\n" +
                 "ResponseCode: " + responseCode + "\r\n" +
                 "ResponseMessage: " + responseMsg + "\r\n" +
-                "Balance1: " + Balance1 + "\r\n" +
-                "Balance2: " + Balance2 + "\r\n");
-
+                "Balance1: " + Balance1.ToString("0.00") + "\r\n" +
+                "Balance2: " + Balance2.ToString("0.00") + "\r\n"
+            );
         }
 
         private static void WriteError(Exception ex, string ebtType)
@@ -389,6 +396,24 @@ namespace plink4
             return "";
         }
 
+
+        private static decimal ParseCents(object obj, string propName)
+        {
+            string raw = Str(obj, propName);
+
+            if (string.IsNullOrWhiteSpace(raw))
+                return 0m;
+
+            decimal val;
+            if (decimal.TryParse(raw, out val))
+                return val * 0.01m;
+
+            Logger.Info($"ParseCents failed for {propName}. Raw value = [{raw}]");
+            return 0m;
+
+
+
+        }
         private static void DumpObject(object obj, string label)
         {
             if (obj == null) { Logger.Debug(label + " = null"); return; }
