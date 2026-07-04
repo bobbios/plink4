@@ -6,47 +6,75 @@ namespace plink4
 {
     internal static class DoBatchCloseHandler
     {
+        private sealed class BatchCloseResult
+        {
+            public int Rc;
+            public object Rsp;
+            public bool UsedForceClose;
+        }
+
         public static int Run(ArgsModel model)
         {
             try
             {
-                object terminal = CommandRouter.ConnectTerminal(model)
-                    ?? throw new InvalidOperationException("Terminal connection failed.");
+                int rc = TransactionUiRunner.RunWithDialog(model, "Closing batch...\nPlease wait.",
+                    (object terminal, out object result) =>
+                    {
+                        object target = PoslinkReflection.GetProperty(terminal, "Batch")
+                                      ?? PoslinkReflection.GetProperty(terminal, "Transaction")
+                                      ?? terminal;
 
-                object target = PoslinkReflection.GetProperty(terminal, "Batch")
-                              ?? PoslinkReflection.GetProperty(terminal, "Transaction")
-                              ?? terminal;
+                        if (target == null)
+                            throw new InvalidOperationException("Could not find Batch or Transaction object on terminal.");
 
-                if (target == null)
-                    throw new InvalidOperationException("Could not find Batch or Transaction object on terminal.");
+                        object req = PoslinkReflection.CreateRequest("BatchClose");
+                        object rsp = PoslinkReflection.CreateResponse("BatchClose");
 
-                object req = PoslinkReflection.CreateRequest("BatchClose");
-                object rsp = PoslinkReflection.CreateResponse("BatchClose");
+                        PoslinkRequestBuilder.ApplyTrace(req, model.RefNum);
 
-                PoslinkRequestBuilder.ApplyTrace(req, model.RefNum);
+                        int rcInner = PoslinkReflection.InvokeTxMethod(target, "BatchClose", req, ref rsp);
+                        bool usedForceClose = false;
 
-                int rc = PoslinkReflection.InvokeTxMethod(target, "BatchClose", req, ref rsp);
-                bool usedForceClose = false;
+                        if (rcInner != 0)
+                        {
+                            Logger.Info("BatchClose failed (rc=" + rcInner + ", ResponseMessage=" +
+                                GetString(rsp, "ResponseMessage") + "); retrying with ForceBatchClose.");
 
-                if (rc != 0)
+                            object forceReq = PoslinkReflection.CreateRequest("ForceBatchClose");
+                            object forceRsp = PoslinkReflection.CreateResponse("ForceBatchClose");
+
+                            int forceRc = PoslinkReflection.InvokeTxMethod(target, "ForceBatchClose", forceReq, ref forceRsp);
+
+                            rcInner = forceRc;
+                            rsp = forceRsp;
+                            usedForceClose = true;
+                        }
+
+                        result = new BatchCloseResult { Rc = rcInner, Rsp = rsp, UsedForceClose = usedForceClose };
+                        return rcInner;
+                    },
+                    out object resultObj,
+                    out string errorMessage);
+
+                if (rc == TransactionUiRunner.CancelledReturnCode)
                 {
-                    Logger.Info("BatchClose failed (rc=" + rc + ", ResponseMessage=" +
-                        GetString(rsp, "ResponseMessage") + "); retrying with ForceBatchClose.");
-
-                    object forceReq = PoslinkReflection.CreateRequest("ForceBatchClose");
-                    object forceRsp = PoslinkReflection.CreateResponse("ForceBatchClose");
-
-                    int forceRc = PoslinkReflection.InvokeTxMethod(target, "ForceBatchClose", forceReq, ref forceRsp);
-
-                    rc = forceRc;
-                    rsp = forceRsp;
-                    usedForceClose = true;
+                    WriteBatchCloseResponse(1, null);
+                    LegacyResponseWriter.WriteLegacy(model.CardType, model.TxnType, false, "CANCELLED", "", "");
+                    return rc;
                 }
 
-                LegacyResponseWriter.WriteDump(rsp);
-                WriteBatchCloseResponse(rc, rsp, usedForceClose);
+                if (rc == TransactionUiRunner.ConnectionErrorReturnCode || rc == TransactionUiRunner.TimeoutReturnCode)
+                {
+                    WriteBatchCloseResponse(1, null);
+                    LegacyResponseWriter.WriteLegacy(model.CardType, model.TxnType, false, errorMessage ?? "Terminal connection error.", "", "");
+                    return rc;
+                }
 
-                return rc;
+                var batchResult = (BatchCloseResult)resultObj;
+                LegacyResponseWriter.WriteDump(batchResult.Rsp);
+                WriteBatchCloseResponse(batchResult.Rc, batchResult.Rsp, batchResult.UsedForceClose);
+
+                return batchResult.Rc;
             }
             catch (Exception ex)
             {

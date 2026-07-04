@@ -3,6 +3,8 @@ using System.Threading;
 
 namespace plink4
 {
+    internal delegate int TerminalWork(object terminal, out object result);
+
     internal static class TransactionUiRunner
     {
         public const int CancelledReturnCode = 2;
@@ -11,7 +13,24 @@ namespace plink4
 
         public static int RunPaymentFlow(ArgsModel model, string cardTypeUpper, out object response, out string errorMessage)
         {
-            object localResponse = null;
+            string workingMessage = $"Processing {cardTypeUpper} {model.TxnType}...\nFollow prompts on the terminal.";
+
+            return RunWithDialog(
+                model,
+                workingMessage,
+                (object terminal, out object result) => DispatchTransaction(cardTypeUpper, terminal, model, out result),
+                out response,
+                out errorMessage);
+        }
+
+        // Shared by every flow that needs a terminal connection: shows the progress
+        // dialog immediately, connects on a background thread (bounded reachability
+        // check + ConnectTerminal), then runs `work` against the connected terminal
+        // while the same dialog stays up. Handles cancel/timeout/connection-error
+        // uniformly so callers only deal with the happy path plus a return code.
+        public static int RunWithDialog(ArgsModel model, string workingMessage, TerminalWork work, out object result, out string errorMessage)
+        {
+            object localResult = null;
             string localErrorMessage = null;
             int localReturnCode = 1;
             Exception error = null;
@@ -28,7 +47,7 @@ namespace plink4
                     return;
                 }
 
-                Logger.Info("Operator cancelled transaction; sending Cancel to terminal.");
+                Logger.Info("Operator cancelled; sending Cancel to terminal.");
                 bool sent = PoslinkReflection.TryCancelTerminal(terminalRef);
                 Logger.Info(sent ? "Cancel sent to terminal." : "Cancel could not be sent to terminal (method not found or threw).");
             };
@@ -64,9 +83,9 @@ namespace plink4
 
                     terminalRef = terminal;
                     form.SetTerminalConnected();
-                    form.UpdateStatus($"Processing {cardTypeUpper} {model.TxnType}...\nFollow prompts on the terminal.");
+                    form.UpdateStatus(workingMessage);
 
-                    localReturnCode = DispatchTransaction(cardTypeUpper, terminal, model, out localResponse);
+                    localReturnCode = work(terminal, out localResult);
                 }
                 catch (Exception ex)
                 {
@@ -78,7 +97,7 @@ namespace plink4
                 }
             });
             worker.IsBackground = true;
-            worker.Name = "PlinkTransactionWorker";
+            worker.Name = "PlinkTerminalWorker";
 
             // Don't start the worker until the form's handle actually exists —
             // otherwise a fast-completing/failing action can close the dialog
@@ -95,23 +114,23 @@ namespace plink4
                 if (!worker.Join(AppConfig.CancelGraceMs))
                     Logger.Info($"Worker did not finish within {AppConfig.CancelGraceMs}ms of cancel; exiting anyway.");
 
-                response = null;
+                result = null;
                 errorMessage = null;
                 return CancelledReturnCode;
             }
 
             if (form.TimedOut)
             {
-                Logger.Info($"Transaction dialog timed out after {AppConfig.TimeoutMs}ms; sending Cancel to terminal.");
+                Logger.Info($"Dialog timed out after {AppConfig.TimeoutMs}ms; sending Cancel to terminal.");
                 PoslinkReflection.TryCancelTerminal(terminalRef);
-                response = null;
-                errorMessage = localErrorMessage ?? "Transaction timed out with no response from the terminal.";
+                result = null;
+                errorMessage = localErrorMessage ?? "Timed out with no response from the terminal.";
                 return TimeoutReturnCode;
             }
 
             if (dialogResult == System.Windows.Forms.DialogResult.Abort)
             {
-                response = null;
+                result = null;
                 errorMessage = localErrorMessage ?? "Cannot reach terminal.";
                 return ConnectionErrorReturnCode;
             }
@@ -119,7 +138,7 @@ namespace plink4
             if (error != null)
                 throw error;
 
-            response = localResponse;
+            result = localResult;
             errorMessage = null;
             return localReturnCode;
         }

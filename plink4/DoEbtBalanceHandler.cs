@@ -30,133 +30,141 @@ namespace plink4
                 if (model == null)
                     throw new ArgumentNullException(nameof(model));
 
-                // 1. Get terminal
-                object terminal = CommandRouter.ConnectTerminal(model);
-                if (terminal == null)
-                    throw new Exception("Terminal connection failed.");
-                Logger.Info("Terminal type: " + terminal.GetType().FullName);
-
-                // 2. Get _transaction
-                object txn = GetPrivateField(terminal, "_transaction");
-                if (txn == null)
-                    throw new Exception("_transaction field is null on " + terminal.GetType().FullName);
-                Logger.Info("Transaction type: " + txn.GetType().FullName);
-
-                // 3. Resolve types
-                Type txnType = txn.GetType();
-                Assembly semiAsm = txnType.Assembly;
-                Type reqType = semiAsm.GetType("POSLinkSemiIntegration.Transaction.DoEbtRequest", true);
-                Type rspType = semiAsm.GetType("POSLinkSemiIntegration.Transaction.DoEbtResponse", true);
-                //      Logger.Debug("ReqType: " + reqType.FullName);
-                //     Logger.Debug("RspType: " + rspType.FullName);
-
-                // 4. Build the request
-                dynamic req = Activator.CreateInstance(reqType);
-                req.TransactionType = Enum.Parse(req.TransactionType.GetType(), "Inquiry", true);
-
-                if (req.AccountInformation == null)
-                {
-                    req.AccountInformation = Activator.CreateInstance(
-                        req.GetType().GetProperty("AccountInformation").PropertyType);
-                }
-                string ebtEnumName =
-                    string.Equals(ebtType, "C", StringComparison.OrdinalIgnoreCase)
-                        ? "CashBenefits"
-                        : "FoodStamp";
-
-                req.AccountInformation.EbtType = Enum.Parse(
-                    req.AccountInformation.EbtType.GetType(), ebtEnumName, true);
-
-                // Optional: force CardType too (uncomment if still needed)
-                // req.AccountInformation.CardType = Enum.Parse(req.AccountInformation.CardType.GetType(), "EbtFoodStamp", true);
-
-                // TraceInformation – populate required trace fields safely
-                var traceObj = req.TraceInformation;
-                if (traceObj == null)
-                {
-                    var traceProp = req.GetType().GetProperty("TraceInformation", BindingFlags.Public | BindingFlags.Instance);
-                    if (traceProp != null && traceProp.CanWrite)
+                int rc = TransactionUiRunner.RunWithDialog(model, "Checking EBT balance...\nFollow prompts on the terminal.",
+                    (object terminal, out object result) =>
                     {
-                        var traceType = traceProp.PropertyType;
-                        traceObj = Activator.CreateInstance(traceType);
-                        traceProp.SetValue(req, traceObj);
-                        Logger.Info("Created TraceInformation instance");
-                    }
-                }
+                        Logger.Info("Terminal type: " + terminal.GetType().FullName);
 
-                if (traceObj != null)
-                {
-                    string ecrRef = DateTime.Now.ToString("HHmmssfff");  // unique enough
+                        // 2. Get _transaction
+                        object txn = GetPrivateField(terminal, "_transaction");
+                        if (txn == null)
+                            throw new Exception("_transaction field is null on " + terminal.GetType().FullName);
+                        Logger.Info("Transaction type: " + txn.GetType().FullName);
 
-                    // Try common trace property names – add more if needed based on future dumps
-                    var possibleTraceProps = new[]
-                    {
-                        "TraceNumber", "TraceNum", "TraceNo",
-                        "TerminalTraceNumber", "TerminalTrace",
-                        "ReferenceNumber", "RefNumber",
-                        "EcrReferenceNumber", "ECRRefNo",
-                        "InvoiceNumber", "InvoiceNo"
-                    };
+                        // 3. Resolve types
+                        Type txnType = txn.GetType();
+                        Assembly semiAsm = txnType.Assembly;
+                        Type reqType = semiAsm.GetType("POSLinkSemiIntegration.Transaction.DoEbtRequest", true);
+                        Type rspType = semiAsm.GetType("POSLinkSemiIntegration.Transaction.DoEbtResponse", true);
+                        //      Logger.Debug("ReqType: " + reqType.FullName);
+                        //     Logger.Debug("RspType: " + rspType.FullName);
 
-                    bool setAny = false;
-                    foreach (var propName in possibleTraceProps)
-                    {
-                        var p = traceObj.GetType().GetProperty(propName, BindingFlags.Public | BindingFlags.Instance);
-                        if (p != null && p.CanWrite)
+                        // 4. Build the request
+                        dynamic req = Activator.CreateInstance(reqType);
+                        req.TransactionType = Enum.Parse(req.TransactionType.GetType(), "Inquiry", true);
+
+                        if (req.AccountInformation == null)
                         {
-                            try
+                            req.AccountInformation = Activator.CreateInstance(
+                                req.GetType().GetProperty("AccountInformation").PropertyType);
+                        }
+                        string ebtEnumName =
+                            string.Equals(ebtType, "C", StringComparison.OrdinalIgnoreCase)
+                                ? "CashBenefits"
+                                : "FoodStamp";
+
+                        req.AccountInformation.EbtType = Enum.Parse(
+                            req.AccountInformation.EbtType.GetType(), ebtEnumName, true);
+
+                        // Optional: force CardType too (uncomment if still needed)
+                        // req.AccountInformation.CardType = Enum.Parse(req.AccountInformation.CardType.GetType(), "EbtFoodStamp", true);
+
+                        // TraceInformation – populate required trace fields safely
+                        var traceObj = req.TraceInformation;
+                        if (traceObj == null)
+                        {
+                            var traceProp = req.GetType().GetProperty("TraceInformation", BindingFlags.Public | BindingFlags.Instance);
+                            if (traceProp != null && traceProp.CanWrite)
                             {
-                                p.SetValue(traceObj, ecrRef);
-                                Logger.Info($"Set TraceInformation.{propName} = {ecrRef}");
-                                setAny = true;
-                            }
-                            catch (Exception ex)
-                            {
-                                Logger.Info($"Failed setting {propName}: {ex.Message}");
+                                var traceType = traceProp.PropertyType;
+                                traceObj = Activator.CreateInstance(traceType);
+                                traceProp.SetValue(req, traceObj);
+                                Logger.Info("Created TraceInformation instance");
                             }
                         }
-                    }
 
-                    if (!setAny)
-                    {
-                        Logger.Info("WARNING: No recognizable trace/reference properties found on TraceRequest");
-                    }
-                }
-                else
+                        if (traceObj != null)
+                        {
+                            string ecrRef = DateTime.Now.ToString("HHmmssfff");  // unique enough
+
+                            // Try common trace property names – add more if needed based on future dumps
+                            var possibleTraceProps = new[]
+                            {
+                                "TraceNumber", "TraceNum", "TraceNo",
+                                "TerminalTraceNumber", "TerminalTrace",
+                                "ReferenceNumber", "RefNumber",
+                                "EcrReferenceNumber", "ECRRefNo",
+                                "InvoiceNumber", "InvoiceNo"
+                            };
+
+                            bool setAny = false;
+                            foreach (var propName in possibleTraceProps)
+                            {
+                                var p = traceObj.GetType().GetProperty(propName, BindingFlags.Public | BindingFlags.Instance);
+                                if (p != null && p.CanWrite)
+                                {
+                                    try
+                                    {
+                                        p.SetValue(traceObj, ecrRef);
+                                        Logger.Info($"Set TraceInformation.{propName} = {ecrRef}");
+                                        setAny = true;
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        Logger.Info($"Failed setting {propName}: {ex.Message}");
+                                    }
+                                }
+                            }
+
+                            if (!setAny)
+                            {
+                                Logger.Info("WARNING: No recognizable trace/reference properties found on TraceRequest");
+                            }
+                        }
+                        else
+                        {
+                            Logger.Info("TraceInformation could not be created or accessed");
+                        }
+
+                        // 5. Call DoEbt
+                        MethodInfo doEbt = txnType.GetMethod("DoEbt", new[] { reqType, rspType.MakeByRefType() });
+                        if (doEbt == null)
+                            throw new Exception("DoEbt method not found on " + txnType.FullName);
+
+                        Logger.Debug("Calling DoEbt...");
+                        object[] args = { req, null };
+                        doEbt.Invoke(txn, args);
+                        dynamic rsp = args[1];
+
+                        DumpObject(rsp.AmountInformation, "AmountInformation");
+
+                        // 6. Evaluate & write
+                        int rcInner = IsApproved(rsp) ? 0 : 1;
+                        result = rsp;
+                        return rcInner;
+                    },
+                    out object rspObj,
+                    out string errorMessage);
+
+                if (rc == TransactionUiRunner.CancelledReturnCode)
                 {
-                    Logger.Info("TraceInformation could not be created or accessed");
+                    WriteFile(
+                        "ResultCode: 1\r\n" +
+                        "ResultTxt: CANCELLED\r\n" +
+                        "ResponseCode: \r\n" +
+                        "ResponseMessage: Cancelled by operator.\r\n" +
+                        "Balance1: 0.00\r\n" +
+                        "Balance2: 0.00\r\n");
+                    return rc;
                 }
 
-                // 5. Call DoEbt
-                MethodInfo doEbt = txnType.GetMethod("DoEbt", new[] { reqType, rspType.MakeByRefType() });
-                if (doEbt == null)
-                    throw new Exception("DoEbt method not found on " + txnType.FullName);
+                if (rc == TransactionUiRunner.ConnectionErrorReturnCode || rc == TransactionUiRunner.TimeoutReturnCode)
+                {
+                    WriteError(new Exception(errorMessage ?? "Terminal connection error."), ebtType);
+                    return rc;
+                }
 
-
-                // ---------------------------------------------------
-                // DEBUG: Dump the EBT request before sending
-                // ---------------------------------------------------
-                //        Logger.Debug("------ EBT REQUEST DUMP BEGIN ------");
-
-                //      DumpObjectProperties(req, "req.");
-
-                //       Logger.Debug("------ EBT REQUEST DUMP END ------");
-
-
-                Logger.Debug("Calling DoEbt...");
-                object[] args = { req, null };
-                doEbt.Invoke(txn, args);
-                dynamic rsp = args[1];
-                //       Logger.Debug("DoEbt returned. rsp=" + (rsp?.GetType().FullName ?? "null"));
-
-                //     DumpObject(rsp, "DoEbtResponse");
-                DumpObject(rsp.AmountInformation, "AmountInformation");
-                //      DumpObject(rsp.AccountInformation, "AccountInformation");
-                //      DumpObject(rsp.HostInformation, "HostInformation");
-
-                // 6. Evaluate & write
-                int rc = IsApproved(rsp) ? 0 : 1;
-                WriteResponse(rc, rsp, ebtType);
+                WriteResponse(rc, rspObj, ebtType);
                 return rc;
             }
             catch (Exception ex)

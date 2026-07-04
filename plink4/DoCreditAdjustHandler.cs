@@ -20,19 +20,39 @@ namespace plink4
                 if (!decimal.TryParse(model.Amount, NumberStyles.Any, CultureInfo.InvariantCulture, out _))
                     throw new Exception("Invalid amount: " + model.Amount);
 
-                object terminal = CommandRouter.ConnectTerminal(model);
-                if (terminal == null) throw new Exception("Terminal connection failed.");
+                int ret = TransactionUiRunner.RunWithDialog(model, "Adjusting transaction...\nFollow prompts on the terminal.",
+                    (object terminal, out object result) =>
+                    {
+                        object txnObj = Get(terminal, "Transaction");
+                        if (txnObj == null) throw new Exception("terminal.Transaction is null.");
 
-                object txnObj = Get(terminal, "Transaction");
-                if (txnObj == null) throw new Exception("terminal.Transaction is null.");
+                        Assembly asm = txnObj.GetType().Assembly;
+                        object req = CreateDoCreditRequest(model, asm);
 
-                Assembly asm = txnObj.GetType().Assembly;
-                object req = CreateDoCreditRequest(model, asm);
+                        object rspInner;
+                        int retInner = InvokeMethodWithOutInt(txnObj, "DoCredit", req, out rspInner);
 
-                object rsp;
-                int ret = InvokeMethodWithOutInt(txnObj, "DoCredit", req, out rsp);
+                        if (rspInner == null) throw new Exception("DoCredit returned null response.");
 
-                if (rsp == null) throw new Exception("DoCredit returned null response.");
+                        result = rspInner;
+                        return retInner;
+                    },
+                    out object rspObj,
+                    out string errorMessage);
+
+                if (ret == TransactionUiRunner.CancelledReturnCode)
+                {
+                    LegacyResponseWriter.WriteLegacy(model.CardType, model.TxnType, false, "CANCELLED", "", model.ApprovalCode ?? "");
+                    return ret;
+                }
+
+                if (ret == TransactionUiRunner.ConnectionErrorReturnCode || ret == TransactionUiRunner.TimeoutReturnCode)
+                {
+                    LegacyResponseWriter.WriteLegacy(model.CardType, model.TxnType, false, errorMessage ?? "Terminal connection error.", "", model.ApprovalCode ?? "");
+                    return ret;
+                }
+
+                object rsp = rspObj;
 
                 string responseCode = SafeGet(rsp, "ResponseCode");
                 string responseMessage = SafeGet(rsp, "ResponseMessage");

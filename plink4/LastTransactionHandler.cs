@@ -16,14 +16,32 @@ namespace plink4
 
             try
             {
-                object terminal = CommandRouter.ConnectTerminal(model)
-                    ?? throw new InvalidOperationException("Terminal connection failed.");
+                int rc = TransactionUiRunner.RunWithDialog(model, "Retrieving last transactions...\nPlease wait.",
+                    (object terminal, out object result) =>
+                    {
+                        var rows = GetHistoryTransactions(terminal, model, 10);
+                        if (rows.Count == 0)
+                            rows = GetLastTransactions(terminal, model, 10);
 
-                var rows = GetHistoryTransactions(terminal, model, 10);
-                if (rows.Count == 0)
-                    rows = GetLastTransactions(terminal, model, 10);
+                        result = rows;
+                        return 0;
+                    },
+                    out object resultObj,
+                    out string errorMessage);
 
-                WriteLastTransactions(rows);
+                if (rc == TransactionUiRunner.CancelledReturnCode)
+                {
+                    WriteError("Cancelled by operator.");
+                    return rc;
+                }
+
+                if (rc == TransactionUiRunner.ConnectionErrorReturnCode || rc == TransactionUiRunner.TimeoutReturnCode)
+                {
+                    WriteError(errorMessage ?? "Terminal connection error.");
+                    return rc;
+                }
+
+                WriteLastTransactions((List<LastTxnRow>)resultObj);
                 return 0;
             }
             catch (Exception ex)
