@@ -15,6 +15,16 @@ namespace plink4
 
         public static int Run(ArgsModel model)
         {
+            // 127.0.0.1 means no real terminal is assigned to this register for
+            // batch close - skip entirely instead of attempting a connection and
+            // surfacing a "cannot reach terminal" error for an address that was
+            // never going to have one.
+            if (string.Equals((model?.Ip ?? "").Trim(), "127.0.0.1", StringComparison.Ordinal))
+            {
+                Logger.Info("BatchClose: IP is 127.0.0.1 (no terminal assigned); doing nothing.");
+                return 0;
+            }
+
             try
             {
                 int rc = TransactionUiRunner.RunWithDialog(model, "Closing batch...\nPlease wait.",
