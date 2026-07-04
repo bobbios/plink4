@@ -35,33 +35,32 @@ namespace plink4
                     return DoEbtBalanceHandler.Run(model, "C");
                 }
 
-                // Standard payment flows
-                object terminal = ConnectTerminal(model);
-
-                object response = null;
-                int returnCode;
-
+                // Standard payment flows — the dialog owns connecting to the terminal too,
+                // so it appears immediately rather than after a silent, unbounded connect.
                 string cardTypeUpper = (model.CardType ?? "").Trim().ToUpperInvariant();
 
-                switch (cardTypeUpper)
+                int returnCode = TransactionUiRunner.RunPaymentFlow(
+                    model, cardTypeUpper, out object response, out string errorMessage);
+
+                if (returnCode == TransactionUiRunner.CancelledReturnCode)
                 {
-                    case "CREDIT":
-                        returnCode = DoCreditHandler.Run(terminal, model, out response);
-                        break;
+                    Logger.Info("Transaction cancelled by operator.");
+                    LegacyResponseWriter.WriteLegacy(model.CardType, model.TxnType, false, "CANCELLED", "", "");
+                    return returnCode;
+                }
 
-                    case "DEBIT":
-                        returnCode = DoDebitHandler.Run(terminal, model, out response);
-                        break;
+                if (returnCode == TransactionUiRunner.ConnectionErrorReturnCode)
+                {
+                    Logger.Error("Terminal connection error: " + errorMessage);
+                    LegacyResponseWriter.WriteLegacy(model.CardType, model.TxnType, false, errorMessage, "", "");
+                    return returnCode;
+                }
 
-                    case "EBT_CASHBENEFIT":
-                    case "EBT_CASH":
-                    case "EBT_FOODSTAMP":
-                    case "EBT_FOOD":
-                        returnCode = DoEbtHandler.Run(terminal, model, out response);
-                        break;
-
-                    default:
-                        throw new NotSupportedException($"Unsupported CardType: {model.CardType}");
+                if (returnCode == TransactionUiRunner.TimeoutReturnCode)
+                {
+                    Logger.Error("Terminal transaction timed out: " + errorMessage);
+                    LegacyResponseWriter.WriteLegacy(model.CardType, model.TxnType, false, errorMessage, "", "");
+                    return returnCode;
                 }
 
                 LegacyResponseWriter.WriteDump(response);

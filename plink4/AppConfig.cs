@@ -6,6 +6,7 @@ namespace plink4
     {
         public const int PortAlways = 10009;
         public const int TimeoutMs = 120000;
+        public const int ConnectCheckTimeoutMs = 5000;
 
         public const string LogPath = @"C:\newretail\card\plink4.txt";
         public const string OutResponse = @"C:\newretail\card\response.txt";

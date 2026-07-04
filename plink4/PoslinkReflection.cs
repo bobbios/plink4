@@ -158,6 +158,29 @@ namespace plink4
             return null;
         }
 
+        public static bool TryCancelTerminal(object terminal)
+        {
+            try
+            {
+                if (terminal == null) return false;
+
+                var method = terminal.GetType()
+                    .GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                    .FirstOrDefault(m =>
+                        m.Name.Equals("Cancel", StringComparison.OrdinalIgnoreCase) &&
+                        m.GetParameters().Length == 0);
+
+                if (method == null) return false;
+
+                method.Invoke(terminal, null);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         public static int GetErrorCodeInt(object execResult)
         {
             try

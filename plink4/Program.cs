@@ -5,6 +5,7 @@ namespace plink4
 {
     internal class Program
     {
+        [STAThread]
         static int Main(string[] args)
         {
             // Log startup banner + all raw arguments in one line
