@@ -94,6 +94,8 @@ namespace plink4
                 ?? Activator.CreateInstance(semiType)
                 ?? throw new InvalidOperationException("Cannot obtain/create POSLinkSemi instance.");
 
+            DisablePosLinkFileLogging(semi, semiType);
+
             Type tcpType = Type.GetType(TcpSettingType, throwOnError: false)
                 ?? throw new InvalidOperationException("TcpSetting type not found.");
 
@@ -111,6 +113,31 @@ namespace plink4
                 ?? throw new InvalidOperationException("GetTerminal returned null.");
 
             return terminal;
+        }
+
+        // The SDK has its own built-in debug logger (POSLog{date}.txt, raw TCP frame
+        // dumps) that defaults to writing wherever the process's current working
+        // directory happens to be at launch - inconsistent and not something we need
+        // alongside plink4's own Logger. Disable it via the SDK's own LogSetting API.
+        private static void DisablePosLinkFileLogging(object semi, Type semiType)
+        {
+            try
+            {
+                Type logSettingType = Type.GetType("POSLinkCore.LogSetting, POSLinkCore", throwOnError: false);
+                if (logSettingType == null) return;
+
+                object logSetting = Activator.CreateInstance(logSettingType);
+
+                PropertyInfo enabledProp = logSettingType.GetProperty("Enabled", BindingFlags.Public | BindingFlags.Instance);
+                enabledProp?.SetValue(logSetting, false);
+
+                MethodInfo setMethod = semiType.GetMethod("SetLogSetting", new[] { logSettingType });
+                setMethod?.Invoke(semi, new[] { logSetting });
+            }
+            catch
+            {
+                // Best-effort - failing to disable POSLog shouldn't block the transaction.
+            }
         }
 
         // Very minimal singleton/field fallback
