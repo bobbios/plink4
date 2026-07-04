@@ -32,6 +32,10 @@
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
+  <PropertyGroup>
+    <PostBuildEvent>xcopy "$(TargetDir)*.*" "C:\newretail\privforms\apps\plink4\" /Y /E /I /R
+if "%25COMPUTERNAME%25"=="HOMIO2" (xcopy "$(TargetDir)*.*" "Z:\datafiles\forms\apps\plink4\" /Y /E /I /R) else (xcopy "$(TargetDir)*.*" "C:\datafiles\forms\apps\plink4\" /Y /E /I /R)</PostBuildEvent>
+  </PropertyGroup>
   <ItemGroup>
     <Reference Include="netstandard">
       <Private>True</Private>
