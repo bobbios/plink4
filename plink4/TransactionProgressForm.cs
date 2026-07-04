@@ -1,5 +1,6 @@
 using System;
 using System.Drawing;
+using System.IO;
 using System.Windows.Forms;
 
 namespace plink4
@@ -18,7 +19,12 @@ namespace plink4
         // was never really sent yet.
         private const int CancelEnableDelayMs = 3000;
 
+        private static readonly string PowerCycleImagePath =
+            Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Resources", "PowerCycleSteps.png");
+
         private readonly Label _statusLabel;
+        private readonly ProgressBar _progressBar;
+        private readonly PictureBox _powerCycleImage;
         private readonly Button _actionButton;
         private readonly Timer _timeoutTimer;
         private readonly Timer _cancelEnableTimer;
@@ -40,7 +46,7 @@ namespace plink4
             MaximizeBox = false;
             TopMost = true;
             ShowInTaskbar = true;
-            ClientSize = new Size(380, 170);
+            ClientSize = new Size(620, 380);
 
             _timeoutTimer = new Timer { Interval = Math.Max(1, timeoutMs) };
             _timeoutTimer.Tick += OnTimeoutTick;
@@ -63,21 +69,41 @@ namespace plink4
                 Text = message,
                 AutoSize = false,
                 TextAlign = ContentAlignment.MiddleCenter,
-                Location = new Point(10, 15),
-                Size = new Size(360, 90),
-                Font = new Font(Font.FontFamily, 10F)
+                Location = new Point(20, 20),
+                Size = new Size(580, 180),
+                Font = new Font(Font.FontFamily, 20F, FontStyle.Bold)
+            };
+
+            // The SDK gives no real progress signal — DoCredit/DoDebit/DoEbt is a
+            // single blocking call with no intermediate status callback — so this
+            // is deliberately an indeterminate marquee, not a real percentage.
+            _progressBar = new ProgressBar
+            {
+                Style = ProgressBarStyle.Marquee,
+                MarqueeAnimationSpeed = 30,
+                Location = new Point(20, 210),
+                Size = new Size(580, 36)
             };
 
             _actionButton = new Button
             {
                 Text = "Cancel",
-                Size = new Size(100, 32),
-                Location = new Point(140, 115),
+                Size = new Size(200, 60),
+                Location = new Point(210, 290),
+                Font = new Font(Font.FontFamily, 14F, FontStyle.Bold),
                 Enabled = false
             };
             _actionButton.Click += OnActionButtonClick;
 
+            _powerCycleImage = new PictureBox
+            {
+                SizeMode = PictureBoxSizeMode.Zoom,
+                Visible = false
+            };
+
             Controls.Add(_statusLabel);
+            Controls.Add(_progressBar);
+            Controls.Add(_powerCycleImage);
             Controls.Add(_actionButton);
         }
 
@@ -152,11 +178,46 @@ namespace plink4
 
                 _mode = Mode.Error;
                 Text = "Terminal Connection Error";
+
+                // Grow the dialog to make room for the power-cycle steps below the message —
+                // the compact "working" size doesn't have space for a full illustrated strip.
+                ClientSize = new Size(940, 660);
+
+                _statusLabel.Location = new Point(20, 15);
+                _statusLabel.Size = new Size(900, 90);
                 _statusLabel.ForeColor = Color.Firebrick;
-                _statusLabel.Text = message;
+                _statusLabel.Font = new Font(Font.FontFamily, 13F, FontStyle.Regular);
+                _statusLabel.Text = message + "\n\nIf this keeps happening, power-cycle the terminal:";
+
+                _progressBar.Visible = false;
+
+                TryShowPowerCycleImage();
+
+                _actionButton.Location = new Point((ClientSize.Width - _actionButton.Width) / 2, 580);
                 _actionButton.Text = "Close";
                 _actionButton.Enabled = true;
+
+                CenterToScreen();
             });
+        }
+
+        private void TryShowPowerCycleImage()
+        {
+            try
+            {
+                if (_powerCycleImage.Image == null && File.Exists(PowerCycleImagePath))
+                    _powerCycleImage.Image = Image.FromFile(PowerCycleImagePath);
+            }
+            catch
+            {
+                // A missing/corrupt image shouldn't block showing the error itself.
+            }
+
+            if (_powerCycleImage.Image == null) return;
+
+            _powerCycleImage.Location = new Point(20, 115);
+            _powerCycleImage.Size = new Size(900, 440);
+            _powerCycleImage.Visible = true;
         }
 
         public void CompleteAndClose()
