@@ -66,6 +66,13 @@ namespace plink4
                 LegacyResponseWriter.WriteDump(response);
                 LegacyResponseWriter.WriteFromRsp(model.CardType, model.TxnType, returnCode == 0, response);
 
+                if (returnCode != 0)
+                {
+                    string respCode = PoslinkReflection.GetProperty(response, "ResponseCode")?.ToString() ?? "";
+                    string respMsg = PoslinkReflection.GetProperty(response, "ResponseMessage")?.ToString() ?? "";
+                    Logger.Error($"Transaction declined: CardType={model.CardType} TxnType={model.TxnType} ResponseCode={respCode} ResponseMessage={respMsg}");
+                }
+
                 return returnCode;
             }
             catch (Exception ex)

@@ -42,12 +42,14 @@ namespace plink4
 
                 if (ret == TransactionUiRunner.CancelledReturnCode)
                 {
+                    Logger.Info("Adjust cancelled by operator.");
                     LegacyResponseWriter.WriteLegacy(model.CardType, model.TxnType, false, "CANCELLED", "", model.ApprovalCode ?? "");
                     return ret;
                 }
 
                 if (ret == TransactionUiRunner.ConnectionErrorReturnCode || ret == TransactionUiRunner.TimeoutReturnCode)
                 {
+                    Logger.Error("Adjust terminal connection error: " + errorMessage);
                     LegacyResponseWriter.WriteLegacy(model.CardType, model.TxnType, false, errorMessage ?? "Terminal connection error.", "", model.ApprovalCode ?? "");
                     return ret;
                 }
@@ -91,6 +93,9 @@ namespace plink4
                     string.IsNullOrWhiteSpace(authCode) ? model.ApprovalCode : authCode,
                     rsp
                 );
+
+                if (!ok)
+                    Logger.Error($"Adjust declined: ResponseCode={responseCode} ResultCode={resultCode} Message={finalMessage}");
 
                 return ok ? 0 : 1;
             }

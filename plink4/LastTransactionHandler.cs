@@ -31,12 +31,14 @@ namespace plink4
 
                 if (rc == TransactionUiRunner.CancelledReturnCode)
                 {
+                    Logger.Info("LastTransaction cancelled by operator.");
                     WriteError("Cancelled by operator.");
                     return rc;
                 }
 
                 if (rc == TransactionUiRunner.ConnectionErrorReturnCode || rc == TransactionUiRunner.TimeoutReturnCode)
                 {
+                    Logger.Error("LastTransaction terminal connection error: " + errorMessage);
                     WriteError(errorMessage ?? "Terminal connection error.");
                     return rc;
                 }

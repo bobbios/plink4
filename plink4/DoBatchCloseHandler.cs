@@ -54,10 +54,12 @@ namespace plink4
                         return rcInner;
                     },
                     out object resultObj,
-                    out string errorMessage);
+                    out string errorMessage,
+                    allowCancel: false);
 
                 if (rc == TransactionUiRunner.CancelledReturnCode)
                 {
+                    Logger.Info("BatchClose cancelled by operator.");
                     WriteBatchCloseResponse(1, null);
                     LegacyResponseWriter.WriteLegacy(model.CardType, model.TxnType, false, "CANCELLED", "", "");
                     return rc;
@@ -65,6 +67,7 @@ namespace plink4
 
                 if (rc == TransactionUiRunner.ConnectionErrorReturnCode || rc == TransactionUiRunner.TimeoutReturnCode)
                 {
+                    Logger.Error("BatchClose terminal connection error: " + errorMessage);
                     WriteBatchCloseResponse(1, null);
                     LegacyResponseWriter.WriteLegacy(model.CardType, model.TxnType, false, errorMessage ?? "Terminal connection error.", "", "");
                     return rc;
@@ -73,6 +76,12 @@ namespace plink4
                 var batchResult = (BatchCloseResult)resultObj;
                 LegacyResponseWriter.WriteDump(batchResult.Rsp);
                 WriteBatchCloseResponse(batchResult.Rc, batchResult.Rsp, batchResult.UsedForceClose);
+
+                if (batchResult.Rc != 0)
+                {
+                    Logger.Error("BatchClose declined: ResponseCode=" + GetString(batchResult.Rsp, "ResponseCode") +
+                        " ResponseMessage=" + GetString(batchResult.Rsp, "ResponseMessage"));
+                }
 
                 return batchResult.Rc;
             }

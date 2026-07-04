@@ -148,6 +148,7 @@ namespace plink4
 
                 if (rc == TransactionUiRunner.CancelledReturnCode)
                 {
+                    Logger.Info("EbtBalance cancelled by operator.");
                     WriteFile(
                         "ResultCode: 1\r\n" +
                         "ResultTxt: CANCELLED\r\n" +
@@ -160,8 +161,16 @@ namespace plink4
 
                 if (rc == TransactionUiRunner.ConnectionErrorReturnCode || rc == TransactionUiRunner.TimeoutReturnCode)
                 {
+                    Logger.Error("EbtBalance terminal connection error: " + errorMessage);
                     WriteError(new Exception(errorMessage ?? "Terminal connection error."), ebtType);
                     return rc;
+                }
+
+                if (rc != 0)
+                {
+                    Logger.Error("EbtBalance declined: ResponseCode=" + Str(rspObj, "ResponseCode") +
+                        " HostResponseCode=" + Str(rspObj, "HostResponseCode") +
+                        " ResponseMessage=" + FirstOf(Str(rspObj, "HostDetailedMessage"), Str(rspObj, "HostResponseMessage"), Str(rspObj, "ResponseMessage")));
                 }
 
                 WriteResponse(rc, rspObj, ebtType);
