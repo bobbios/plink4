@@ -8,6 +8,14 @@ namespace plink4
         public const int TimeoutMs = 120000;
         public const int ConnectCheckTimeoutMs = 5000;
 
+        // After Cancel() is sent to the terminal, how long to let the in-flight
+        // DoCredit/DoDebit/DoEbt call unwind before this process exits. Without this,
+        // the worker is a background thread that gets killed the instant Main()
+        // returns, tearing the TCP session down abruptly instead of letting the SDK
+        // close it cleanly — which is why the terminal can be left still showing its
+        // "apply card" prompt even though Cancel() was called.
+        public const int CancelGraceMs = 4000;
+
         public const string LogPath = @"C:\newretail\card\plink4.txt";
         public const string OutResponse = @"C:\newretail\card\response.txt";
         public const string OutResponse2 = @"C:\newretail\card\response2.txt";

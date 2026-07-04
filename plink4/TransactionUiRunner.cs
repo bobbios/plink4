@@ -22,8 +22,15 @@ namespace plink4
 
             form.CancelClicked += (s, e) =>
             {
+                if (terminalRef == null)
+                {
+                    Logger.Info("Operator cancelled before terminal connected; nothing to send.");
+                    return;
+                }
+
                 Logger.Info("Operator cancelled transaction; sending Cancel to terminal.");
-                PoslinkReflection.TryCancelTerminal(terminalRef);
+                bool sent = PoslinkReflection.TryCancelTerminal(terminalRef);
+                Logger.Info(sent ? "Cancel sent to terminal." : "Cancel could not be sent to terminal (method not found or threw).");
             };
 
             var worker = new Thread(() =>
@@ -81,6 +88,12 @@ namespace plink4
 
             if (form.CancelRequested)
             {
+                // Give the in-flight SDK call a bounded grace period to unwind after
+                // Cancel() was sent, so the terminal session closes cleanly instead of
+                // being killed mid-flight when this process exits.
+                if (!worker.Join(AppConfig.CancelGraceMs))
+                    Logger.Info($"Worker did not finish within {AppConfig.CancelGraceMs}ms of cancel; exiting anyway.");
+
                 response = null;
                 errorMessage = null;
                 return CancelledReturnCode;

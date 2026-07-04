@@ -12,9 +12,16 @@ namespace plink4
             Error
         }
 
+        // Operators tend to reflex-click Cancel the instant the dialog appears,
+        // before the terminal's even had a chance to respond — hold the button
+        // off for a few seconds so an early click doesn't cancel a request that
+        // was never really sent yet.
+        private const int CancelEnableDelayMs = 3000;
+
         private readonly Label _statusLabel;
         private readonly Button _actionButton;
         private readonly Timer _timeoutTimer;
+        private readonly Timer _cancelEnableTimer;
         private Mode _mode = Mode.Working;
 
         public bool CancelRequested { get; private set; }
@@ -39,10 +46,16 @@ namespace plink4
             _timeoutTimer.Tick += OnTimeoutTick;
             _timeoutTimer.Start();
 
+            _cancelEnableTimer = new Timer { Interval = CancelEnableDelayMs };
+            _cancelEnableTimer.Tick += OnCancelEnableTick;
+            _cancelEnableTimer.Start();
+
             FormClosed += (s, e) =>
             {
                 _timeoutTimer.Stop();
                 _timeoutTimer.Dispose();
+                _cancelEnableTimer.Stop();
+                _cancelEnableTimer.Dispose();
             };
 
             _statusLabel = new Label
@@ -59,7 +72,8 @@ namespace plink4
             {
                 Text = "Cancel",
                 Size = new Size(100, 32),
-                Location = new Point(140, 115)
+                Location = new Point(140, 115),
+                Enabled = false
             };
             _actionButton.Click += OnActionButtonClick;
 
@@ -77,6 +91,13 @@ namespace plink4
             TopMost = true;
             Activate();
             BringToFront();
+        }
+
+        private void OnCancelEnableTick(object sender, EventArgs e)
+        {
+            _cancelEnableTimer.Stop();
+            if (_mode == Mode.Working && !CancelRequested && !TimedOut)
+                _actionButton.Enabled = true;
         }
 
         private void OnTimeoutTick(object sender, EventArgs e)
