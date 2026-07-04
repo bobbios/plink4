@@ -26,9 +26,25 @@ namespace plink4
                 PoslinkRequestBuilder.ApplyTrace(req, model.RefNum);
 
                 int rc = PoslinkReflection.InvokeTxMethod(target, "BatchClose", req, ref rsp);
+                bool usedForceClose = false;
+
+                if (rc != 0)
+                {
+                    Logger.Info("BatchClose failed (rc=" + rc + ", ResponseMessage=" +
+                        GetString(rsp, "ResponseMessage") + "); retrying with ForceBatchClose.");
+
+                    object forceReq = PoslinkReflection.CreateRequest("ForceBatchClose");
+                    object forceRsp = PoslinkReflection.CreateResponse("ForceBatchClose");
+
+                    int forceRc = PoslinkReflection.InvokeTxMethod(target, "ForceBatchClose", forceReq, ref forceRsp);
+
+                    rc = forceRc;
+                    rsp = forceRsp;
+                    usedForceClose = true;
+                }
 
                 LegacyResponseWriter.WriteDump(rsp);
-                WriteBatchCloseResponse(rc, rsp);
+                WriteBatchCloseResponse(rc, rsp, usedForceClose);
 
                 return rc;
             }
@@ -49,7 +65,7 @@ namespace plink4
             }
         }
 
-        private static void WriteBatchCloseResponse(int rc, object rsp)
+        private static void WriteBatchCloseResponse(int rc, object rsp, bool usedForceClose = false)
         {
             string responseCode = GetString(rsp, "ResponseCode");
             string responseMessage = GetString(rsp, "ResponseMessage");
@@ -91,11 +107,19 @@ namespace plink4
             string tid = FirstNonEmpty(GetString(rsp, "TerminalId"), GetString(rsp, "Tid"));
             string mid = GetString(rsp, "Mid");
 
+            string failedTransNum = GetString(rsp, "FailedTransactionNumber");
+            string failedCount = GetString(rsp, "FailedCount");
+            string safFailedCount = GetString(rsp, "SafFailedCount");
+            string safFailedTotal = GetString(rsp, "SafFailedTotal");
+            string lineNumber = GetString(rsp, "LineNumber");
+            string linesMessage = GetString(rsp, "LinesMessage");
+
             string text =
                 "ResultCode: " + resultCode + "\r\n" +
                 "ResultTxt: " + resultTxt + "\r\n" +
                 "ResponseCode: " + responseCode + "\r\n" +
                 "ResponseMessage: " + responseMessage + "\r\n" +
+                "ForceBatchClose: " + (usedForceClose ? "Y" : "N") + "\r\n" +
                 "CreditCount: " + creditCount + "\r\n" +
                 "CreditAmount: " + creditAmount + "\r\n" +
                 "DebitCount: " + debitCount + "\r\n" +
@@ -109,7 +133,13 @@ namespace plink4
                 "TimeStamp: " + timeStamp + "\r\n" +
                 "Tid: " + tid + "\r\n" +
                 "Mid: " + mid + "\r\n" +
-                "BatchNumber: " + batchNum + "\r\n";
+                "BatchNumber: " + batchNum + "\r\n" +
+                "FailedTransactionNumber: " + failedTransNum + "\r\n" +
+                "FailedCount: " + failedCount + "\r\n" +
+                "SafFailedCount: " + safFailedCount + "\r\n" +
+                "SafFailedTotal: " + safFailedTotal + "\r\n" +
+                "LineNumber: " + lineNumber + "\r\n" +
+                "LinesMessage: " + linesMessage + "\r\n";
 
             var dir = Path.GetDirectoryName(AppConfig.BatchResponse);
             if (!string.IsNullOrEmpty(dir))
