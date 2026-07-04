@@ -13,12 +13,6 @@ namespace plink4
             Error
         }
 
-        // Operators tend to reflex-click Cancel the instant the dialog appears,
-        // before the terminal's even had a chance to respond — hold the button
-        // off for a few seconds so an early click doesn't cancel a request that
-        // was never really sent yet.
-        private const int CancelEnableDelayMs = 3000;
-
         private static readonly string PowerCycleImagePath =
             Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Resources", "PowerCycleSteps.png");
 
@@ -27,7 +21,6 @@ namespace plink4
         private readonly PictureBox _powerCycleImage;
         private readonly Button _actionButton;
         private readonly Timer _timeoutTimer;
-        private readonly Timer _cancelEnableTimer;
         private Mode _mode = Mode.Working;
 
         public bool CancelRequested { get; private set; }
@@ -52,16 +45,10 @@ namespace plink4
             _timeoutTimer.Tick += OnTimeoutTick;
             _timeoutTimer.Start();
 
-            _cancelEnableTimer = new Timer { Interval = CancelEnableDelayMs };
-            _cancelEnableTimer.Tick += OnCancelEnableTick;
-            _cancelEnableTimer.Start();
-
             FormClosed += (s, e) =>
             {
                 _timeoutTimer.Stop();
                 _timeoutTimer.Dispose();
-                _cancelEnableTimer.Stop();
-                _cancelEnableTimer.Dispose();
             };
 
             _statusLabel = new Label
@@ -85,6 +72,9 @@ namespace plink4
                 Size = new Size(580, 36)
             };
 
+            // Disabled until the caller confirms the terminal is actually connected
+            // (see SetTerminalConnected) — before that there's no live session for
+            // Cancel to do anything to.
             _actionButton = new Button
             {
                 Text = "Cancel",
@@ -117,13 +107,6 @@ namespace plink4
             TopMost = true;
             Activate();
             BringToFront();
-        }
-
-        private void OnCancelEnableTick(object sender, EventArgs e)
-        {
-            _cancelEnableTimer.Stop();
-            if (_mode == Mode.Working && !CancelRequested && !TimedOut)
-                _actionButton.Enabled = true;
         }
 
         private void OnTimeoutTick(object sender, EventArgs e)
@@ -161,6 +144,15 @@ namespace plink4
             Close();
         }
 
+        public void SetTerminalConnected()
+        {
+            RunOnUiThread(() =>
+            {
+                if (_mode == Mode.Working && !CancelRequested && !TimedOut)
+                    _actionButton.Enabled = true;
+            });
+        }
+
         public void UpdateStatus(string message)
         {
             RunOnUiThread(() =>
@@ -181,10 +173,10 @@ namespace plink4
 
                 // Grow the dialog to make room for the power-cycle steps below the message —
                 // the compact "working" size doesn't have space for a full illustrated strip.
-                ClientSize = new Size(940, 660);
+                ClientSize = new Size(940, 720);
 
                 _statusLabel.Location = new Point(20, 15);
-                _statusLabel.Size = new Size(900, 90);
+                _statusLabel.Size = new Size(900, 180);
                 _statusLabel.ForeColor = Color.Firebrick;
                 _statusLabel.Font = new Font(Font.FontFamily, 13F, FontStyle.Regular);
                 _statusLabel.Text = message + "\n\nIf this keeps happening, power-cycle the terminal:";
@@ -193,7 +185,7 @@ namespace plink4
 
                 TryShowPowerCycleImage();
 
-                _actionButton.Location = new Point((ClientSize.Width - _actionButton.Width) / 2, 580);
+                _actionButton.Location = new Point((ClientSize.Width - _actionButton.Width) / 2, 640);
                 _actionButton.Text = "Close";
                 _actionButton.Enabled = true;
 
@@ -215,8 +207,8 @@ namespace plink4
 
             if (_powerCycleImage.Image == null) return;
 
-            _powerCycleImage.Location = new Point(20, 115);
-            _powerCycleImage.Size = new Size(900, 440);
+            _powerCycleImage.Location = new Point(20, 205);
+            _powerCycleImage.Size = new Size(900, 420);
             _powerCycleImage.Visible = true;
         }
 

@@ -63,6 +63,7 @@ namespace plink4
                     }
 
                     terminalRef = terminal;
+                    form.SetTerminalConnected();
                     form.UpdateStatus($"Processing {cardTypeUpper} {model.TxnType}...\nFollow prompts on the terminal.");
 
                     localReturnCode = DispatchTransaction(cardTypeUpper, terminal, model, out localResponse);
