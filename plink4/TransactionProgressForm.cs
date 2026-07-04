@@ -29,7 +29,7 @@ namespace plink4
 
         public event EventHandler CancelClicked;
 
-        public TransactionProgressForm(string message, int timeoutMs)
+        public TransactionProgressForm(string message, int timeoutMs, bool allowCancel = true)
         {
             Text = "Processing Transaction";
             FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -81,7 +81,8 @@ namespace plink4
                 Size = new Size(200, 60),
                 Location = new Point(210, 290),
                 Font = new Font(Font.FontFamily, 14F, FontStyle.Bold),
-                Enabled = false
+                Enabled = false,
+                Visible = allowCancel
             };
             _actionButton.Click += OnActionButtonClick;
 
@@ -187,6 +188,7 @@ namespace plink4
 
                 _actionButton.Location = new Point((ClientSize.Width - _actionButton.Width) / 2, 640);
                 _actionButton.Text = "Close";
+                _actionButton.Visible = true;
                 _actionButton.Enabled = true;
 
                 CenterToScreen();

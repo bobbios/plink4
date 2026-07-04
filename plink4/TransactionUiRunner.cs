@@ -28,7 +28,7 @@ namespace plink4
         // check + ConnectTerminal), then runs `work` against the connected terminal
         // while the same dialog stays up. Handles cancel/timeout/connection-error
         // uniformly so callers only deal with the happy path plus a return code.
-        public static int RunWithDialog(ArgsModel model, string workingMessage, TerminalWork work, out object result, out string errorMessage)
+        public static int RunWithDialog(ArgsModel model, string workingMessage, TerminalWork work, out object result, out string errorMessage, bool allowCancel = true)
         {
             object localResult = null;
             string localErrorMessage = null;
@@ -37,7 +37,7 @@ namespace plink4
             object terminalRef = null;
 
             string connectingMessage = $"Connecting to terminal {model.Ip}:{model.ArgPort}...";
-            var form = new TransactionProgressForm(connectingMessage, AppConfig.TimeoutMs);
+            var form = new TransactionProgressForm(connectingMessage, AppConfig.TimeoutMs, allowCancel);
 
             form.CancelClicked += (s, e) =>
             {
