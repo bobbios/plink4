@@ -34,11 +34,10 @@ namespace plink4
 
             var lines = new string[26];
 
-            lines[0] = "Result|" + (ok ? "OK" : (responseMessage ?? "ERROR"));
+            lines[0] = "Result|" + (ok ? "APPROVAL" : (responseMessage ?? "ERROR"));
             lines[1] = "CardType|" + FirstNonEmpty(
-                cardType,
-                SafeStr(rspObj, "EdcType"),
-                GetNestedStr(rspObj, "AccountInformation", "CardType")
+                NormalizeCardBrand(GetNestedStr(rspObj, "AccountInformation", "CardType")),
+                cardType
             );
             lines[2] = "TxnType|" + (txnType ?? "");
             lines[3] = "Time|" + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
@@ -192,6 +191,33 @@ namespace plink4
             foreach (var v in values)
                 if (!string.IsNullOrWhiteSpace(v)) return v;
             return "";
+        }
+
+        // AccountInformation.CardType comes back as a friendly name ("Visa",
+        // "MasterCard", ...) on this SDK build, but numeric codes are handled too
+        // in case a different SDK version reverts to them. "NotSet"/blank (e.g.
+        // EBT, or a declined transaction with no card data) falls through to the
+        // caller's raw CardType ("CREDIT"/"DEBIT"/"EBT_FOOD"...) instead. The
+        // resolved brand is capped to 4 letters (VISA/MAST/AMEX/DISC/...).
+        private static string NormalizeCardBrand(string raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) return "";
+            if (string.Equals(raw, "NotSet", StringComparison.OrdinalIgnoreCase)) return "";
+
+            string brand;
+            switch (raw)
+            {
+                case "01": brand = "Visa"; break;
+                case "02": brand = "MasterCard"; break;
+                case "03": brand = "AMEX"; break;
+                case "04": brand = "Discover"; break;
+                case "05": brand = "DinerClub"; break;
+                case "06": brand = "enRoute"; break;
+                default: brand = raw; break;
+            }
+
+            string upper = brand.ToUpperInvariant();
+            return upper.Length > 4 ? upper.Substring(0, 4) : upper;
         }
     }
 }
