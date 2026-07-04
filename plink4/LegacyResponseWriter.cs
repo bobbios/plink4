@@ -34,20 +34,20 @@ namespace plink4
 
             var lines = new string[26];
 
-            lines[0] = "Result: " + (ok ? "OK" : (responseMessage ?? "ERROR"));
-            lines[1] = "CardType: " + FirstNonEmpty(
+            lines[0] = "Result|" + (ok ? "OK" : (responseMessage ?? "ERROR"));
+            lines[1] = "CardType|" + FirstNonEmpty(
                 cardType,
                 SafeStr(rspObj, "EdcType"),
                 GetNestedStr(rspObj, "AccountInformation", "CardType")
             );
-            lines[2] = "TxnType: " + (txnType ?? "");
-            lines[3] = "Time: " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+            lines[2] = "TxnType|" + (txnType ?? "");
+            lines[3] = "Time|" + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
 
-            lines[4] = "TransType: " + FirstNonEmpty(
+            lines[4] = "TransType|" + FirstNonEmpty(
                 SafeStr(rspObj, "TransactionType")
             );
 
-            lines[5] = "Account: " + FirstNonEmpty(
+            lines[5] = "Account|" + FirstNonEmpty(
                 GetNestedStr(rspObj, "AccountInformation", "Account"),
                 SafeStr(rspObj, "AccountNumber"),
                 SafeStr(rspObj, "MaskedAccount"),
@@ -55,13 +55,13 @@ namespace plink4
                 SafeStr(rspObj, "PAN")
             );
 
-            lines[6] = "ExpDate: " + FirstNonEmpty(
+            lines[6] = "ExpDate|" + FirstNonEmpty(
                 GetNestedStr(rspObj, "AccountInformation", "ExpireDate"),
                 SafeStr(rspObj, "ExpireDate"),
                 SafeStr(rspObj, "ExpDate")
             );
 
-            lines[7] = "RecNo: " + FirstNonEmpty(
+            lines[7] = "RecNo|" + FirstNonEmpty(
                 GetNestedStr(rspObj, "TraceInformation", "ReferenceNumber"),
                 GetNestedStr(rspObj, "TraceInformation", "RefNum"),
                 SafeStr(rspObj, "RecordNo"),
@@ -69,7 +69,7 @@ namespace plink4
                 SafeStr(rspObj, "ReferenceNumber")
             );
 
-            lines[8] = "Amount: " + FirstNonEmpty(
+            lines[8] = "Amount|" + FirstNonEmpty(
                 GetNestedStr(rspObj, "AmountInformation", "ApprovedAmount"),
                 GetNestedStr(rspObj, "AmountInformation", "ApproveAmount"),
                 GetNestedStr(rspObj, "AmountInformation", "TransactionAmount"),
@@ -77,7 +77,7 @@ namespace plink4
                 SafeStr(rspObj, "TransactionAmount")
             );
 
-            lines[9] = "HostRef: " + FirstNonEmpty(
+            lines[9] = "HostRef|" + FirstNonEmpty(
                 GetNestedStr(rspObj, "HostInformation", "HostReferenceNumber"),
                 GetNestedStr(rspObj, "HostInformation", "HostRefNum"),
                 SafeStr(rspObj, "HostRefNum"),
@@ -85,28 +85,28 @@ namespace plink4
                 SafeStr(rspObj, "RefNum")
             );
 
-            lines[10] = "AuthCode: " + FirstNonEmpty(
+            lines[10] = "AuthCode|" + FirstNonEmpty(
                 authCode,
                 GetNestedStr(rspObj, "HostInformation", "AuthorizationCode"),
                 GetNestedStr(rspObj, "HostInformation", "AuthCode")
             );
 
-            lines[11] = "ResponseCode: " + (responseCode ?? "");
-            lines[12] = "ResponseMessage: " + (responseMessage ?? "");
+            lines[11] = "ResponseCode|" + (responseCode ?? "");
+            lines[12] = "ResponseMessage|" + (responseMessage ?? "");
 
-            lines[13] = "RemainingBalance: " + FirstNonEmpty(
+            lines[13] = "RemainingBalance|" + FirstNonEmpty(
                 GetNestedStr(rspObj, "AmountInformation", "Balance1"),
                 SafeStr(rspObj, "RemainingBalance"),
                 SafeStr(rspObj, "Balance"),
                 SafeStr(rspObj, "AvailableBalance")
             );
 
-            lines[14] = "Field15: " + FirstNonEmpty(
+            lines[14] = "Field15|" + FirstNonEmpty(
                 GetNestedStr(rspObj, "AmountInformation", "Balance2")
             );
 
             for (int i = 15; i < 26; i++)
-                lines[i] = "Field" + (i + 1) + ": ";
+                lines[i] = "Field" + (i + 1) + "|";
 
             File.WriteAllText(AppConfig.OutResponse, string.Join(Environment.NewLine, lines) + Environment.NewLine);
         }
@@ -123,13 +123,13 @@ namespace plink4
 
             var sb = new StringBuilder();
             var t = obj.GetType();
-            sb.AppendLine("TYPE: " + t.FullName);
+            sb.AppendLine("TYPE|" + t.FullName);
 
             foreach (var pi in t.GetProperties(BindingFlags.Public | BindingFlags.Instance))
             {
                 object v = null;
                 try { v = pi.GetValue(obj, null); } catch { v = "(unreadable)"; }
-                sb.AppendLine(pi.Name + " = " + (v == null ? "(null)" : v.ToString()));
+                sb.AppendLine(pi.Name + "|" + (v == null ? "" : v.ToString()));
             }
 
             DumpSub(sb, obj, "AmountInformation");
@@ -149,13 +149,11 @@ namespace plink4
                 var sub = pi?.GetValue(obj, null);
                 if (sub == null) return;
 
-                sb.AppendLine("");
-                sb.AppendLine("SUBOBJ: " + prop + " (" + sub.GetType().FullName + ")");
                 foreach (var spi in sub.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance))
                 {
                     object v = null;
                     try { v = spi.GetValue(sub, null); } catch { v = "(unreadable)"; }
-                    sb.AppendLine("  " + spi.Name + " = " + (v == null ? "(null)" : v.ToString()));
+                    sb.AppendLine(prop + "." + spi.Name + "|" + (v == null ? "" : v.ToString()));
                 }
             }
             catch { }
