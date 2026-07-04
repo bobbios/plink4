@@ -29,10 +29,14 @@ namespace plink4
 
             if (trace == null) return;
 
+            // Deliberately excludes InvoiceNumber/InvoiceNo/InvoiceNum: plink2's
+            // proven-working request only ever sets EcrRefNum, never InvoiceNumber.
+            // The terminal validates InvoiceNumber strictly (rejects it as
+            // "INVOICE INVALID" for the legacy POS's long ref numbers), while the
+            // Ecr/reference-style fields have no such restriction.
             string[] props =
             {
-            "EcrReferenceNumber", "InvoiceNumber", "EcrRefNum", "InvoiceNo",
-            "InvoiceNum", "RefNo", "RefNum", "ReferenceNumber",
+            "EcrReferenceNumber", "EcrRefNum", "RefNo", "RefNum", "ReferenceNumber",
             "TransId", "TransactionId", "TicketNo", "SequenceNumber"
         };
 

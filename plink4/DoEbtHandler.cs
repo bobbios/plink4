@@ -81,8 +81,10 @@ namespace plink4
             var trace = PoslinkReflection.GetOrCreateProperty(req, "TraceInformation");
             if (trace == null) return;
 
+            // Don't set InvoiceNumber here — the terminal validates it strictly and
+            // rejects the legacy POS's long ref numbers as "INVOICE INVALID"; plink2's
+            // proven-working request only ever sets the Ecr reference number.
             PoslinkReflection.SetProperty(trace, "EcrReferenceNumber", model.RefNum);
-            PoslinkReflection.SetProperty(trace, "InvoiceNumber", model.RefNum);
 
             // Uncomment only if you later support original reference numbers
             // if (!string.IsNullOrWhiteSpace(model.OriginalRef) && model.OriginalRef != "0")
