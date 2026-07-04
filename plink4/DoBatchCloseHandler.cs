@@ -78,6 +78,8 @@ namespace plink4
             }
             catch (Exception ex)
             {
+                Logger.Error($"DoBatchCloseHandler failed: {ex}");
+
                 WriteBatchCloseResponse(1, null);
 
                 LegacyResponseWriter.WriteLegacy(

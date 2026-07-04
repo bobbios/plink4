@@ -40,9 +40,10 @@ namespace plink4
                 response = responseObj;
                 return returnCode;
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                throw; // Let CommandRouter handle exceptions
+                Logger.Error($"DoEbt failed: {ex}");
+                throw;
             }
         }
 

@@ -45,8 +45,7 @@ namespace plink4
             }
             catch (Exception ex)
             {
-                // Optional: minimal logging
-                // Logger.Error($"DoCredit failed: {ex.Message}");
+                Logger.Error($"DoCredit failed: {ex}");
                 throw;
             }
         }

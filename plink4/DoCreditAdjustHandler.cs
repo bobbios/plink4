@@ -96,6 +96,8 @@ namespace plink4
             }
             catch (Exception ex)
             {
+                Logger.Error($"DoCreditAdjustHandler failed: {ex}");
+
                 LegacyResponseWriter.WriteLegacy(
                     model?.CardType ?? "",
                     model?.TxnType ?? "",

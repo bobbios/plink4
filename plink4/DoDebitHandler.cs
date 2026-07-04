@@ -45,8 +45,7 @@ namespace plink4
             }
             catch (Exception ex)
             {
-                // Optional: minimal error handling/logging if needed
-                // Logger.Error($"DoDebit failed: {ex.Message}");
+                Logger.Error($"DoDebit failed: {ex}");
                 throw;
             }
         }

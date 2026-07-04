@@ -46,6 +46,7 @@ namespace plink4
             }
             catch (Exception ex)
             {
+                Logger.Error($"LastTransactionHandler failed: {ex}");
                 WriteError(ex.Message);
                 return 1;
             }

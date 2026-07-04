@@ -70,9 +70,7 @@ namespace plink4
             }
             catch (Exception ex)
             {
-                // Minimal error reporting – rethrow or log minimally
-                // (remove Logger if you don't want any logging here)
-                // Logger?.Error($"CommandRouter.Execute failed: {ex.Message}");
+                Logger.Error($"CommandRouter.Execute failed: {ex}");
                 throw;
             }
         }
