@@ -80,6 +80,7 @@ if "%25COMPUTERNAME%25"=="HOMIO2" (xcopy "$(TargetDir)*.*" "Z:\datafiles\forms\a
     <Compile Include="DoDebitHandler.cs" />
     <Compile Include="DoEbtBalanceHandler.cs" />
     <Compile Include="DoEbtHandler.cs" />
+    <Compile Include="GetPhoneNumberHandler.cs" />
     <Compile Include="LastTransactionHandler.cs" />
     <Compile Include="LegacyResponseWriter.cs" />
     <Compile Include="Logger.cs" />

@@ -35,6 +35,11 @@ namespace plink4
                     return DoEbtBalanceHandler.Run(model, "C");
                 }
 
+                if (model.CardType == "LOYALTY" && model.TxnType == "PHONE")
+                {
+                    return GetPhoneNumberHandler.Run(model);
+                }
+
                 // Standard payment flows — the dialog owns connecting to the terminal too,
                 // so it appears immediately rather than after a silent, unbounded connect.
                 string cardTypeUpper = (model.CardType ?? "").Trim().ToUpperInvariant();

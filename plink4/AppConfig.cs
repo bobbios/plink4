@@ -23,5 +23,6 @@ namespace plink4
         public const string LastTransactionResponse = @"C:\newretail\card\lasttransactionresponse.txt";
         public const string Last10Transactions = @"C:\newretail\card\last10Transactions.txt";
         public const string BalanceResponse = @"C:\newretail\card\ebt_balance.txt";
+        public const string LoyaltyResponse = @"C:\newretail\card\loyalty_response.txt";
     }
 }
