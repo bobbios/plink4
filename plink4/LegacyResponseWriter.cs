@@ -93,15 +93,23 @@ namespace plink4
             lines[11] = "ResponseCode|" + (responseCode ?? "");
             lines[12] = "ResponseMessage|" + (responseMessage ?? "");
 
+            // Terminal reports both EBT sub-accounts on every EBT response:
+            // Balance1 = cash benefits, Balance2 = food stamp (see DoEbtBalanceHandler).
+            // For an EBT_FOOD transaction the customer-facing balance is Balance2, not Balance1.
+            string cardTypeUpper = (cardType ?? "").Trim().ToUpperInvariant();
+            bool isEbtFood = cardTypeUpper == "EBT_FOOD" || cardTypeUpper == "EBT_FOODSTAMP";
+            string primaryBalanceProp = isEbtFood ? "Balance2" : "Balance1";
+            string secondaryBalanceProp = isEbtFood ? "Balance1" : "Balance2";
+
             lines[13] = "RemainingBalance|" + FirstNonEmpty(
-                GetNestedStr(rspObj, "AmountInformation", "Balance1"),
+                GetNestedStr(rspObj, "AmountInformation", primaryBalanceProp),
                 SafeStr(rspObj, "RemainingBalance"),
                 SafeStr(rspObj, "Balance"),
                 SafeStr(rspObj, "AvailableBalance")
             );
 
             lines[14] = "Field15|" + FirstNonEmpty(
-                GetNestedStr(rspObj, "AmountInformation", "Balance2")
+                GetNestedStr(rspObj, "AmountInformation", secondaryBalanceProp)
             );
 
             for (int i = 15; i < 26; i++)
