@@ -19,15 +19,13 @@ namespace plink4
         private readonly Label _statusLabel;
         private readonly ProgressBar _progressBar;
         private readonly PictureBox _powerCycleImage;
+        private readonly Label _cancelHintLabel;
         private readonly Button _actionButton;
         private readonly Timer _timeoutTimer;
         private Mode _mode = Mode.Working;
 
-        public bool CancelRequested { get; private set; }
         public bool ErrorAcknowledged { get; private set; }
         public bool TimedOut { get; private set; }
-
-        public event EventHandler CancelClicked;
 
         public TransactionProgressForm(string message, int timeoutMs, bool allowCancel = true)
         {
@@ -72,19 +70,29 @@ namespace plink4
                 Size = new Size(580, 36)
             };
 
-            // Disabled until the caller confirms the terminal is actually connected
-            // (see SetTerminalConnected) — before that there's no live session for
-            // Cancel to do anything to.
+            // The terminal itself is cancelled via its physical red X key, not from
+            // this app — this button now only appears for the Error/Close state.
             _actionButton = new Button
             {
-                Text = "Cancel",
                 Size = new Size(200, 60),
                 Location = new Point(210, 290),
                 Font = new Font(Font.FontFamily, 14F, FontStyle.Bold),
                 Enabled = false,
-                Visible = allowCancel
+                Visible = false
             };
             _actionButton.Click += OnActionButtonClick;
+
+            _cancelHintLabel = new Label
+            {
+                Text = "To cancel, press the red X button on the terminal.",
+                AutoSize = false,
+                TextAlign = ContentAlignment.MiddleCenter,
+                Location = new Point(20, 300),
+                Size = new Size(580, 40),
+                Font = new Font(Font.FontFamily, 11F, FontStyle.Italic),
+                ForeColor = Color.DimGray,
+                Visible = allowCancel
+            };
 
             _powerCycleImage = new PictureBox
             {
@@ -95,6 +103,7 @@ namespace plink4
             Controls.Add(_statusLabel);
             Controls.Add(_progressBar);
             Controls.Add(_powerCycleImage);
+            Controls.Add(_cancelHintLabel);
             Controls.Add(_actionButton);
         }
 
@@ -114,7 +123,7 @@ namespace plink4
         {
             _timeoutTimer.Stop();
 
-            if (CancelRequested || TimedOut) return;
+            if (TimedOut) return;
 
             TimedOut = true;
             DialogResult = DialogResult.Ignore;
@@ -125,33 +134,11 @@ namespace plink4
         {
             _timeoutTimer.Stop();
 
-            if (_mode == Mode.Error)
-            {
-                ErrorAcknowledged = true;
-                DialogResult = DialogResult.Abort;
-                Close();
-                return;
-            }
+            if (_mode != Mode.Error) return;
 
-            if (CancelRequested) return;
-
-            CancelRequested = true;
-            _actionButton.Enabled = false;
-            _statusLabel.Text = "Cancelling...";
-
-            CancelClicked?.Invoke(this, EventArgs.Empty);
-
-            DialogResult = DialogResult.Cancel;
+            ErrorAcknowledged = true;
+            DialogResult = DialogResult.Abort;
             Close();
-        }
-
-        public void SetTerminalConnected()
-        {
-            RunOnUiThread(() =>
-            {
-                if (_mode == Mode.Working && !CancelRequested && !TimedOut)
-                    _actionButton.Enabled = true;
-            });
         }
 
         public void UpdateStatus(string message)
@@ -167,7 +154,7 @@ namespace plink4
         {
             RunOnUiThread(() =>
             {
-                if (CancelRequested || TimedOut) return;
+                if (TimedOut) return;
 
                 _mode = Mode.Error;
                 Text = "Terminal Connection Error";
@@ -183,6 +170,7 @@ namespace plink4
                 _statusLabel.Text = message + "\n\nIf this keeps happening, power-cycle the terminal:";
 
                 _progressBar.Visible = false;
+                _cancelHintLabel.Visible = false;
 
                 TryShowPowerCycleImage();
 
@@ -218,7 +206,7 @@ namespace plink4
         {
             RunOnUiThread(() =>
             {
-                if (_mode == Mode.Working && !CancelRequested && !TimedOut)
+                if (_mode == Mode.Working && !TimedOut)
                 {
                     _timeoutTimer.Stop();
                     DialogResult = DialogResult.OK;
