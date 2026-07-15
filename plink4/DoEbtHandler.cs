@@ -142,12 +142,10 @@ namespace plink4
             // TransactionAmount — it never populates OriginalAmount, and doing so
             // gets "ORIGAMOUNT NOT ALLOWED" back from the terminal.
             TrySetMoney(amounts, "TransactionAmount", saleAmount);
-            if (txnType == "RETURN")
-            {
-                if (cardType == "EBT_CASH" || cardType == "EBT_CASHBENEFIT")
-                    TrySetMoney(amounts, "CashBackAmount", 0m);
-            }
-            else
+
+            // plink2's proven-working EBT return request doesn't set CashBackAmount
+            // either - only SALE does.
+            if (txnType != "RETURN")
             {
                 if ((cardType == "EBT_CASH" || cardType == "EBT_CASHBENEFIT") && cashBack > 0)
                     TrySetMoney(amounts, "CashBackAmount", cashBack);
