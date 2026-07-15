@@ -58,8 +58,10 @@ namespace plink4
                     break;
 
                 case "RETURN":
+                    // Don't set OriginalTransactionType — plink2's proven-working EBT
+                    // return request never populates it, and forcing it to Sale gets
+                    // "ORIGTRANSTYPE NOT SUPPORTED" back from the terminal.
                     PoslinkReflection.SetEnumProperty(req, "TransactionType", "Return", "Refund");
-                    PoslinkReflection.SetEnumProperty(req, "OriginalTransactionType", "Sale", "Purchase");
                     break;
 
                 case "BALANCE":
@@ -136,10 +138,12 @@ namespace plink4
             decimal saleAmount = ParseAmount(model.Amount);
             decimal cashBack = ParseAmount(model.Surcharge);
 
+            // plink2's proven-working EBT return request only ever sets
+            // TransactionAmount — it never populates OriginalAmount, and doing so
+            // gets "ORIGAMOUNT NOT ALLOWED" back from the terminal.
             TrySetMoney(amounts, "TransactionAmount", saleAmount);
             if (txnType == "RETURN")
             {
-                TrySetMoney(amounts, "OriginalAmount", saleAmount);
                 if (cardType == "EBT_CASH" || cardType == "EBT_CASHBENEFIT")
                     TrySetMoney(amounts, "CashBackAmount", 0m);
             }
