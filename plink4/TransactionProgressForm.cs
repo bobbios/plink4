@@ -20,9 +20,30 @@ namespace plink4
         private readonly ProgressBar _progressBar;
         private readonly PictureBox _powerCycleImage;
         private readonly Label _cancelHintLabel;
+        private readonly Label _elapsedLabel;
+        private readonly Label _versionLabel;
         private readonly Button _actionButton;
         private readonly Timer _timeoutTimer;
+        private readonly Timer _elapsedTimer;
+        private readonly System.Diagnostics.Stopwatch _elapsedStopwatch = System.Diagnostics.Stopwatch.StartNew();
         private Mode _mode = Mode.Working;
+
+        // Static file version + build timestamp shown on the dialog so operators/testers
+        // can tell which build is actually running without checking the file system.
+        private static string GetVersionInfoText()
+        {
+            try
+            {
+                string path = System.Reflection.Assembly.GetExecutingAssembly().Location;
+                var ver = System.Diagnostics.FileVersionInfo.GetVersionInfo(path);
+                var built = File.GetLastWriteTime(path);
+                return $"plink4 v{ver.FileVersion} — built {built:yyyy-MM-dd HH:mm}";
+            }
+            catch
+            {
+                return "plink4";
+            }
+        }
 
         public bool ErrorAcknowledged { get; private set; }
         public bool TimedOut { get; private set; }
@@ -43,10 +64,16 @@ namespace plink4
             _timeoutTimer.Tick += OnTimeoutTick;
             _timeoutTimer.Start();
 
+            _elapsedTimer = new Timer { Interval = 1000 };
+            _elapsedTimer.Tick += OnElapsedTick;
+            _elapsedTimer.Start();
+
             FormClosed += (s, e) =>
             {
                 _timeoutTimer.Stop();
                 _timeoutTimer.Dispose();
+                _elapsedTimer.Stop();
+                _elapsedTimer.Dispose();
             };
 
             _statusLabel = new Label
@@ -94,17 +121,47 @@ namespace plink4
                 Visible = allowCancel
             };
 
+            _elapsedLabel = new Label
+            {
+                Text = "Elapsed: 0s",
+                AutoSize = false,
+                TextAlign = ContentAlignment.MiddleCenter,
+                Location = new Point(20, 250),
+                Size = new Size(580, 20),
+                Font = new Font(Font.FontFamily, 10F, FontStyle.Regular),
+                ForeColor = Color.Gray
+            };
+
             _powerCycleImage = new PictureBox
             {
                 SizeMode = PictureBoxSizeMode.Zoom,
                 Visible = false
             };
 
+            _versionLabel = new Label
+            {
+                Text = GetVersionInfoText(),
+                AutoSize = false,
+                TextAlign = ContentAlignment.MiddleRight,
+                Font = new Font(Font.FontFamily, 8F, FontStyle.Regular),
+                ForeColor = Color.Gray,
+                Location = new Point(20, 358),
+                Size = new Size(580, 16)
+            };
+
             Controls.Add(_statusLabel);
             Controls.Add(_progressBar);
             Controls.Add(_powerCycleImage);
             Controls.Add(_cancelHintLabel);
+            Controls.Add(_elapsedLabel);
+            Controls.Add(_versionLabel);
             Controls.Add(_actionButton);
+        }
+
+        private void OnElapsedTick(object sender, EventArgs e)
+        {
+            if (IsDisposed) return;
+            _elapsedLabel.Text = $"Elapsed: {_elapsedStopwatch.Elapsed.Minutes}m {_elapsedStopwatch.Elapsed.Seconds}s";
         }
 
         protected override void OnShown(EventArgs e)

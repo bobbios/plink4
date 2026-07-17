@@ -61,9 +61,16 @@ namespace plink4
             object report = PoslinkReflection.RequireProperty(terminal, "Report", "Report property is null.");
 
             string[] edcTypes = { "Credit", "Debit", "Ebt", "Gift", "Cash", "Loyalty", "QrPayment", "Other" };
+            var sw = System.Diagnostics.Stopwatch.StartNew();
 
             foreach (var edc in edcTypes)
             {
+                if (sw.ElapsedMilliseconds > FallbackBudgetMs)
+                {
+                    Logger.Info($"LastTransaction history lookup stopped after {sw.ElapsedMilliseconds}ms (budget {FallbackBudgetMs}ms).");
+                    break;
+                }
+
                 object reqTotal = PoslinkReflection.CreateRequest("LocalDetailReport");
                 object rspTotal = PoslinkReflection.CreateResponse("LocalDetailReport");
 
@@ -73,13 +80,15 @@ namespace plink4
                 TrySetEnumCandidates(reqTotal, "TransactionResultType", "NotSet");
 
                 int rcTotal = PoslinkReflection.InvokeTxMethod(report, "LocalDetailReport", reqTotal, ref rspTotal);
-                if (rcTotal != 0 || rspTotal == null) continue;
+                if (rcTotal != 0 || rspTotal == null || !IsSuccessResponseCode(rspTotal)) continue;
 
                 string totalRaw = ReadString(rspTotal, "TotalRecord");
                 if (!int.TryParse(totalRaw, out int total) || total <= 0) continue;
 
                 for (int i = total - 1; i >= 0 && list.Count < takeCount; i--)
                 {
+                    if (sw.ElapsedMilliseconds > FallbackBudgetMs) break;
+
                     object req = PoslinkReflection.CreateRequest("LocalDetailReport");
                     object rsp = PoslinkReflection.CreateResponse("LocalDetailReport");
 
@@ -90,7 +99,7 @@ namespace plink4
                     SetStringOrIntIfExists(req, "RecordNumber", i.ToString());
 
                     int rc = PoslinkReflection.InvokeTxMethod(report, "LocalDetailReport", req, ref rsp);
-                    if (rc != 0 || rsp == null) continue;
+                    if (rc != 0 || rsp == null || !IsSuccessResponseCode(rsp)) continue;
 
                     var row = BuildRowFromResponse(rsp, edc);
                     if (IsEmptyRow(row)) continue;
@@ -111,6 +120,14 @@ namespace plink4
             return list;
         }
 
+        // Bounds on the per-record probing fallback below: with no local history on the
+        // terminal (e.g. demo mode, or a freshly batch-closed terminal), every single probe
+        // comes back "not found" and nothing here ever hits takeCount to break out early —
+        // so without a hard time budget this can turn into up to 200 records * 8 EDC types
+        // = 1600 sequential terminal round trips, hanging the dialog for many minutes.
+        private const int MaxRecordProbesPerEdc = 25;
+        private const int FallbackBudgetMs = 15000;
+
         private static List<LastTxnRow> GetLastTransactions(object terminal, ArgsModel model, int takeCount)
         {
             var list = new List<LastTxnRow>();
@@ -118,23 +135,31 @@ namespace plink4
             object report = PoslinkReflection.RequireProperty(terminal, "Report", "Report property is null.");
 
             string[] edcTypes = { "Credit", "Debit", "Ebt", "Gift", "Cash", "Loyalty", "QrPayment", "Other" };
+            var sw = System.Diagnostics.Stopwatch.StartNew();
 
-            foreach (var edc in edcTypes)
-            {
-                var latest = GetSingleDetail(report, model, edc, null, true);
-                if (latest != null && !IsEmptyRow(latest))
-                    list.Add(latest);
-            }
-
-            if (list.Count < takeCount)
+            // Deliberately not using LastTransaction=Retrieve ("give me your last
+            // transaction") here — confirmed against a real terminal that it doesn't scope
+            // by EdcType and echoes back one cached record regardless of the filter,
+            // producing false-positive rows on a terminal with zero real transactions.
+            // The indexed RecordNumber lookup below (same one GetHistoryTransactions uses)
+            // is the one proven to correctly report empty when the terminal is empty.
+            if (list.Count < takeCount && sw.ElapsedMilliseconds <= FallbackBudgetMs)
             {
                 foreach (var edc in edcTypes)
                 {
-                    for (int rec = 1; rec <= 200 && list.Count < takeCount; rec++)
+                    for (int rec = 1; rec <= MaxRecordProbesPerEdc && list.Count < takeCount; rec++)
                     {
-                        var row = GetSingleDetail(report, model, edc, rec, false);
+                        var row = GetSingleDetail(report, model, edc, rec);
                         if (row != null && !IsEmptyRow(row))
                             list.Add(row);
+
+                        if (sw.ElapsedMilliseconds > FallbackBudgetMs) break;
+                    }
+
+                    if (sw.ElapsedMilliseconds > FallbackBudgetMs)
+                    {
+                        Logger.Info($"LastTransaction fallback stopped after {sw.ElapsedMilliseconds}ms (budget {FallbackBudgetMs}ms) — terminal likely has no local history.");
+                        break;
                     }
                 }
             }
@@ -149,7 +174,7 @@ namespace plink4
             return list;
         }
 
-        private static LastTxnRow GetSingleDetail(object report, ArgsModel model, string edc, int? recordNo, bool useLastFlag)
+        private static LastTxnRow GetSingleDetail(object report, ArgsModel model, string edc, int? recordNo)
         {
             object req = PoslinkReflection.CreateRequest("LocalDetailReport");
             object rsp = PoslinkReflection.CreateResponse("LocalDetailReport");
@@ -159,23 +184,25 @@ namespace plink4
             TrySetEnumCandidates(req, "TransactionType", "NotSet");
             TrySetEnumCandidates(req, "CardType", "NotSet");
             TrySetEnumCandidates(req, "TransactionResultType", "NotSet");
-
-            if (useLastFlag)
-                TrySetEnumCandidates(req, "LastTransaction", "Retrieve");
-            else
-                TrySetEnumCandidates(req, "LastTransaction", "NotRetrieve");
+            TrySetEnumCandidates(req, "LastTransaction", "NotRetrieve");
 
             if (recordNo.HasValue)
                 SetIntIfExists(req, "RecordNumber", recordNo.Value);
 
             int rc = PoslinkReflection.InvokeTxMethod(report, "LocalDetailReport", req, ref rsp);
-            if (rc != 0 || rsp == null) return null;
-
-            string respCode = ReadString(rsp, "ResponseCode");
-            if (!string.IsNullOrWhiteSpace(respCode) && respCode != "0" && respCode != "000000")
-                return null;
+            if (rc != 0 || rsp == null || !IsSuccessResponseCode(rsp)) return null;
 
             return BuildRowFromResponse(rsp, edc);
+        }
+
+        // The SDK's own execution-result error code only reflects whether the call itself
+        // succeeded — a call can succeed while the response's own ResponseCode says
+        // "NOT FOUND" (e.g. 100023) with otherwise stale/leftover field values still
+        // populated. Callers must check this before trusting a response's fields.
+        private static bool IsSuccessResponseCode(object rsp)
+        {
+            string respCode = ReadString(rsp, "ResponseCode");
+            return string.IsNullOrWhiteSpace(respCode) || respCode == "0" || respCode == "000000";
         }
 
         private static LastTxnRow BuildRowFromResponse(object rsp, string fallbackEdc)
