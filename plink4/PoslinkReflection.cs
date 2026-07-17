@@ -51,7 +51,9 @@ namespace plink4
                 throw new Exception($"{methodName} method not found.");
 
             object[] args = { req, rsp };
+            var sw = System.Diagnostics.Stopwatch.StartNew();
             var execResult = method.Invoke(target, args);
+            Logger.Info($"TIMING: SDK {methodName} call (terminal round trip) took {sw.ElapsedMilliseconds}ms");
             rsp = args[1];
 
             return GetErrorCodeInt(execResult) == 0 ? 0 : 1;

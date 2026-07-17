@@ -92,12 +92,16 @@ namespace plink4
             const string SemiFullName = "POSLinkSemiIntegration.POSLinkSemi, POSLinkSemiIntegration";
             const string TcpSettingType = "POSLinkCore.CommunicationSetting.TcpSetting, POSLinkCore";
 
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+
             Type semiType = Type.GetType(SemiFullName, throwOnError: false)
                 ?? throw new InvalidOperationException("POSLinkSemi type not found.");
 
             object semi = GetStaticFieldOrSingleton(semiType)
                 ?? Activator.CreateInstance(semiType)
                 ?? throw new InvalidOperationException("Cannot obtain/create POSLinkSemi instance.");
+
+            Logger.Info($"TIMING: POSLinkSemi resolve/create took {sw.ElapsedMilliseconds}ms");
 
             DisablePosLinkFileLogging(semi, semiType);
 
@@ -114,8 +118,10 @@ namespace plink4
             MethodInfo getTerminalMethod = semiType.GetMethod("GetTerminal", new[] { tcpType })
                 ?? throw new InvalidOperationException("GetTerminal(TcpSetting) method not found.");
 
+            sw.Restart();
             object terminal = getTerminalMethod.Invoke(semi, new[] { tcp })
                 ?? throw new InvalidOperationException("GetTerminal returned null.");
+            Logger.Info($"TIMING: GetTerminal(TcpSetting) SDK call took {sw.ElapsedMilliseconds}ms");
 
             return terminal;
         }

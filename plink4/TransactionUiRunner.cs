@@ -41,13 +41,17 @@ namespace plink4
 
             var worker = new Thread(() =>
             {
+                var stageSw = System.Diagnostics.Stopwatch.StartNew();
                 try
                 {
                     int port;
                     if (!int.TryParse(model.ArgPort, out port))
                         port = AppConfig.PortAlways;
 
-                    if (!TerminalConnectivity.IsReachable(model.Ip, port, AppConfig.ConnectCheckTimeoutMs))
+                    bool reachable = TerminalConnectivity.IsReachable(model.Ip, port, AppConfig.ConnectCheckTimeoutMs);
+                    Logger.Info($"TIMING: reachability check for {model.Ip}:{port} took {stageSw.ElapsedMilliseconds}ms (reachable={reachable})");
+
+                    if (!reachable)
                     {
                         localErrorMessage = $"Cannot reach terminal at {model.Ip}:{port}.\n\nCheck that the terminal is powered on,\nconnected to the network, and that the\nIP address is correct.";
                         Logger.Error(localErrorMessage);
@@ -56,12 +60,15 @@ namespace plink4
                     }
 
                     object terminal;
+                    stageSw.Restart();
                     try
                     {
                         terminal = CommandRouter.ConnectTerminal(model);
+                        Logger.Info($"TIMING: ConnectTerminal (GetTerminal) took {stageSw.ElapsedMilliseconds}ms");
                     }
                     catch (Exception ex)
                     {
+                        Logger.Info($"TIMING: ConnectTerminal (GetTerminal) failed after {stageSw.ElapsedMilliseconds}ms");
                         localErrorMessage = $"Cannot reach terminal at {model.Ip}:{model.ArgPort}.\n\n{ex.Message}";
                         Logger.Error("ConnectTerminal failed: " + ex);
                         form.ShowError(localErrorMessage);
@@ -71,7 +78,9 @@ namespace plink4
                     terminalRef = terminal;
                     form.UpdateStatus(workingMessage);
 
+                    stageSw.Restart();
                     localReturnCode = work(terminal, out localResult);
+                    Logger.Info($"TIMING: transaction call (request build + SDK invoke) took {stageSw.ElapsedMilliseconds}ms");
                 }
                 catch (Exception ex)
                 {
